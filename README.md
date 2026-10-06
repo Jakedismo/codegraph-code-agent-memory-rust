@@ -630,4 +630,4 @@ MIT
 - [Jina AI](https://jina.ai)
 - [Ollama](https://ollama.com)
 
-![codegraph-agent-memory](docs/assets/footer.jpg)
+![codegraph-agent-memory](docs/assets/footer.png)
