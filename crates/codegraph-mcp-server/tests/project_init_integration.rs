@@ -70,6 +70,16 @@ fn all_hook_choices_install_only_selected_harnesses_and_merge_both_guides() {
                 let text = std::fs::read_to_string(project.path().join(name)).unwrap();
                 assert!(text.contains("Keep "));
                 assert_eq!(text.matches("# codegraph").count(), 1);
+                assert!(
+                    text.contains("command-line interface (CLI) tool"),
+                    "{name}: {text}"
+                );
+                assert!(text.contains("executable on PATH"), "{name}: {text}");
+                assert!(text.contains("through your Bash/shell"), "{name}: {text}");
+                assert!(
+                    text.contains("```bash\ncodegraph agent context"),
+                    "{name}: {text}"
+                );
                 for tool in ["context", "impact", "architecture", "quality"] {
                     assert!(text.contains(&format!("codegraph agent {tool}")));
                 }

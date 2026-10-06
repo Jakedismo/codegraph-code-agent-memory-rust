@@ -1,5 +1,9 @@
 # CodeGraph agentic CLI
 
+CodeGraph is a command-line interface (CLI) tool available as the `codegraph`
+executable on PATH. Run every `codegraph ...` command below through your Bash/shell
+execution tool, just as you would run `git` or `cargo`.
+
 Use CodeGraph's built-in reasoning agents for code discovery, change impact,
 architecture, and quality questions. They gather evidence with internal graph tools
 and return synthesized answers with source locations. Call these public commands:
@@ -12,7 +16,7 @@ and return synthesized answers with source locations. Call these public commands
 | Identify quality risks | `codegraph agent quality "area to assess"` | `complexity`, `coupling`, `hotspots` (all use the quality workflow) |
 
 Examples:
-```sh
+```bash
 codegraph agent context "Where is request authentication implemented?" --focus search
 codegraph agent impact "What breaks if token validation changes?" --focus call_chain
 codegraph agent architecture "Describe the public authentication interfaces" --focus api_surface
