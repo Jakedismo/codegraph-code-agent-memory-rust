@@ -124,10 +124,14 @@ mod enabled {
                 &root,
                 &home,
                 &url,
-                &["memory", "write", "--input", "-"],
-                Some(
-                    json!({"statement":"Keep scalar scoring stable","idempotency_key":"request-1"}),
-                ),
+                &[
+                    "memory",
+                    "write",
+                    "Keep scalar scoring stable",
+                    "--idempotency-key",
+                    "request-1",
+                ],
+                None,
             ));
             assert_eq!(accepted["embedding_ready"], true);
             let id = accepted["id"].as_str().unwrap();
@@ -143,7 +147,17 @@ mod enabled {
                 &root,
                 &home,
                 &url,
-                &["memory", "read", "scoring"],
+                &[
+                    "memory",
+                    "read",
+                    "scoring",
+                    "--scope",
+                    "both",
+                    "--limit",
+                    "1",
+                    "--token-budget",
+                    "3000",
+                ],
                 None,
             ));
             assert_eq!(
@@ -309,6 +323,77 @@ mod enabled {
                     .iter()
                     .any(|reason| reason == "supporting_evidence_requires_reindex")
             );
+            let selection = value(invoke(
+                &root,
+                &home,
+                &url,
+                &["memory", "delete", "--query", "scoring"],
+                None,
+            ));
+            assert_eq!(selection["status"], "needs_selection");
+            let claim = &recalled["memories"][0]["memory"];
+            let claim_id = claim["id"].as_str().unwrap();
+            let revision = claim["revision"].as_u64().unwrap().to_string();
+            let corrected = value(invoke(
+                &root,
+                &home,
+                &url,
+                &[
+                    "memory",
+                    "update",
+                    "Keep scalar scoring stable",
+                    "--memory-id",
+                    claim_id,
+                    "--expected-revision",
+                    &revision,
+                ],
+                None,
+            ));
+            assert!(corrected["revision"].as_u64().unwrap() > claim["revision"].as_u64().unwrap());
+            value(invoke(
+                &root,
+                &home,
+                &url,
+                &[
+                    "memory",
+                    "wait",
+                    corrected["operation_id"].as_str().unwrap(),
+                ],
+                None,
+            ));
+            let stale_delete = invoke(
+                &root,
+                &home,
+                &url,
+                &[
+                    "memory",
+                    "delete",
+                    "--memory-id",
+                    claim_id,
+                    "--expected-revision",
+                    &revision,
+                ],
+                None,
+            );
+            assert!(!stale_delete.status.success());
+            assert!(String::from_utf8_lossy(&stale_delete.stdout).contains("Revision conflict"));
+            let target = &changed["needs_verification"][0]["memory"];
+            let target_revision = target["revision"].as_u64().unwrap().to_string();
+            let deleted = value(invoke(
+                &root,
+                &home,
+                &url,
+                &[
+                    "memory",
+                    "delete",
+                    "--memory-id",
+                    target["id"].as_str().unwrap(),
+                    "--expected-revision",
+                    &target_revision,
+                ],
+                None,
+            ));
+            assert_eq!(deleted["status"], "forgotten");
             std::fs::write(
                 root.join(".env"),
                 "CODEGRAPH_EMBEDDING_QUERY_PREFIX=changed-prefix: \n",
@@ -342,9 +427,38 @@ fn memory_help_and_init_guidance_require_no_providers() {
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
     for command in [
-        "write", "read", "update", "delete", "status", "wait", "retry",
+        "write", "read", "update", "delete", "status", "wait", "retry", "reembed", "service",
     ] {
         assert!(help.contains(command));
+    }
+    for (command, flags) in [
+        (
+            "write",
+            vec!["--idempotency-key", "--asynchronous", "--ttl-seconds"],
+        ),
+        (
+            "read",
+            vec!["--limit", "--token-budget", "--include-provisional"],
+        ),
+        (
+            "update",
+            vec!["--memory-id", "--expected-revision", "--complete"],
+        ),
+        (
+            "delete",
+            vec!["--memory-id", "--expected-revision", "--query"],
+        ),
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
+            .args(["memory", command, "--help"])
+            .current_dir(project.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let help = String::from_utf8(output.stdout).unwrap();
+        for flag in flags {
+            assert!(help.contains(flag), "{help}");
+        }
     }
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_codegraph"))
         .args(["init", "--hooks", "none", "--no-index"])

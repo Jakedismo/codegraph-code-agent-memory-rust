@@ -206,8 +206,17 @@ The MCP surface provides four tools alongside the four agentic workflows:
 codegraph memory write "Preserve scalar summation order in semantic scoring"
 codegraph memory read "What scoring constraints should I preserve?"
 codegraph memory write "Prefer short explanations" --scope user
+codegraph memory read "Previous scoring decisions" --limit 5 --token-budget 2000
+codegraph memory update --query "scoring constraints"  # select candidates
+codegraph memory update "Corrected observation" --memory-id <id> --expected-revision 1
+codegraph memory delete --memory-id <id> --expected-revision 2
 codegraph agent context "Explain semantic scoring" --memory on
 ```
+
+Use `codegraph memory --help` or a subcommand's `--help` for available flags.
+Mutation requires the exact claim ID and current revision; `--query` returns
+selection candidates without modifying them. Evidence-rich requests remain available
+through `--input`, with explicit CLI fields overriding matching JSON fields.
 
 Example `memory_write` input:
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added - Semantic agent memory
 
+- Discoverable CLI subcommand help and direct flags for write idempotency/TTL,
+  asynchronous acceptance, recall budgets/filters, revision-checked corrections
+  and forgetting, semantic target selection, and working-state completion. JSON
+  requests remain supported for evidence and advanced metadata; CLI fields override
+  only explicitly supplied values.
 - Working CLI and MCP memory interfaces: semantic `write`, `read`, `update`, and
   `delete`, plus CLI status/wait/retry, owner service controls, and explicit re-embedding.
 - Independent durable project/session/user stores, stable project/worktree identity,

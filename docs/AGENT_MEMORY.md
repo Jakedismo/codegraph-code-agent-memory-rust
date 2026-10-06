@@ -45,7 +45,17 @@ codegraph memory read "What scoring guarantees should I preserve?"
 codegraph memory write "Prefer short explanations" --scope user
 codegraph memory write "Investigating the scoring regression" \
   --scope session --session-id task-42
+codegraph memory write "Preserve scalar scoring order" --idempotency-key scoring-42
+codegraph memory read "What scoring constraints apply?" --limit 5 --token-budget 2000
 ```
+
+Use `codegraph memory --help` and each subcommand's `--help` for the CLI surface.
+Write flags include `--ttl-seconds`, `--asynchronous`, and `--code-related`. Read
+flags include `--scope both|project|session|user`, `--symbol`, `--node-id`,
+`--include-provisional`, `--include-archived`, `--include-expired`, and
+`--include-stale`. Verification warnings remain enabled. Explicit CLI fields
+override their counterparts in `--input`; omitted flags preserve JSON fields.
+Evidence, applicability, confirmation, and detailed temporal filters use JSON input.
 
 The default write scope is `project`. `user` is an explicit cross-project scope;
 `session` requires an explicit session identity. Reads default to authorized project
@@ -128,6 +138,18 @@ An embedding failure or incompatible identity cannot become lexical-only recall.
 
 An update/delete with a semantic `query` returns `needs_selection`. Select the exact
 `memory_id` and `expected_revision` before mutating it:
+
+```sh
+codegraph memory update --query "scoring constraints"   # select candidates
+codegraph memory update "Corrected observation" --memory-id <id> --expected-revision 1
+codegraph memory delete --query "obsolete scoring decision"   # select candidates
+codegraph memory delete --memory-id <id> --expected-revision 2
+codegraph memory update --memory-id <id> --expected-revision 3 --complete
+```
+
+The exact selector requires both identity and revision. A semantic selector never
+changes or deletes a claim. `--complete` applies only to session/working-state memory.
+The same selectors are available in JSON:
 
 ```json
 {"memory_id":"<id>","expected_revision":1,"statement":"Corrected observation"}
