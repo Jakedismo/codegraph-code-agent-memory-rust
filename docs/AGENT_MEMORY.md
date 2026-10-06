@@ -121,6 +121,15 @@ reported separately. Without a configured LLM, accepted semantic observations st
 provisional. They are visible to the explicit originating session, or through
 `include_provisional: true`, while classification awaits configuration.
 
+Extraction and reconciliation share one repair allowance per attempt, covering both
+typed JSON and proposal validation (claim count, evidence indexes, candidate revisions,
+and unauthorized relationships). Failed validation reports a specific content-free
+reason in the operation's `error`; provider failures remain redacted. Failed operations
+retain their provisional claims for explicit recall, retry, or revision-checked deletion.
+An authorized correction supplies its selected target to classification and requires
+one replacement claim; the service applies the correction and preserves verification
+requirements.
+
 The classifier proposes kinds and relationships; deterministic policy chooses
 `working`, `durable`, `core`, or `archive`. Session/working-state memory receives a
 24-hour review horizon. Facts/procedures receive 30 days, decisions/episodes 90 days,

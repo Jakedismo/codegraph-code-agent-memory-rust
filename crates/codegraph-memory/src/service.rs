@@ -59,6 +59,22 @@ pub trait Classifier: Send + Sync {
         claims: Vec<Proposal>,
         candidates: Vec<Claim>,
     ) -> Result<Vec<Proposal>>;
+    async fn extract_for_operation(
+        &self,
+        observation: &Observation,
+        _operation: &Operation,
+    ) -> Result<Vec<Proposal>> {
+        self.extract(observation).await
+    }
+    async fn reconcile_for_operation(
+        &self,
+        observation: &Observation,
+        claims: Vec<Proposal>,
+        candidates: Vec<Claim>,
+        _operation: &Operation,
+    ) -> Result<Vec<Proposal>> {
+        self.reconcile(observation, claims, candidates).await
+    }
 }
 #[derive(Clone)]
 pub struct MemoryService {
@@ -515,20 +531,35 @@ impl MemoryService {
                 tracing::info!(operation_id=%operation.id,"Memory background attempt completed");
                 return Ok(true);
             }
-            Ok(Err(e)) => format!("{e:#}"),
-            Err(_) => "Background processing deadline exceeded".into(),
+            Ok(Err(e)) => e,
+            Err(_) => anyhow::anyhow!("Background processing deadline exceeded"),
         };
+        let validation = error.downcast_ref::<ProposalValidationError>();
+        let detail = format!("{error:#}");
+        let permanent = validation.is_some()
+            || detail.contains("422")
+            || detail.contains("401")
+            || detail.contains("403")
+            || detail.contains("Invalid classifier")
+            || detail.contains("incompatible");
+        // Only typed, content-free diagnostics may escape provider error redaction.
+        let safe_error = validation.map_or_else(
+            || {
+                if permanent {
+                    "Permanent provider or proposal validation failure".into()
+                } else {
+                    "Transient processing failure or deadline".into()
+                }
+            },
+            ToString::to_string,
+        );
+        tracing::warn!(operation_id=%operation.id, error=%safe_error, "Memory background attempt failed");
         let mut store = self.store.lock().await;
         let mut next = store.state.clone();
         if let Some(job) = next.operations.get_mut(&operation.id)
             && job.state == JobState::Running
             && job.attempts == operation.attempts
         {
-            let permanent = error.contains("422")
-                || error.contains("401")
-                || error.contains("403")
-                || error.contains("Invalid classifier")
-                || error.contains("incompatible");
             job.state = if job.attempts >= 3 || permanent {
                 JobState::Failed
             } else {
@@ -536,15 +567,7 @@ impl MemoryService {
             };
             job.retry_at =
                 Some(Utc::now() + Duration::seconds(if job.attempts == 1 { 5 } else { 20 }));
-            // Provider errors may contain request content/credentials; persist a safe classification only.
-            job.error = Some(
-                if permanent {
-                    "Permanent provider or proposal validation failure"
-                } else {
-                    "Transient processing failure or deadline"
-                }
-                .into(),
-            );
+            job.error = Some(safe_error);
             job.lease_until = None;
             store.commit(next).await?;
         }
@@ -609,7 +632,7 @@ impl MemoryService {
         let Some(classifier) = &self.classifier else {
             return Ok(());
         };
-        let extracted = classifier.extract(observation).await?;
+        let extracted = classifier.extract_for_operation(observation, job).await?;
         validate_proposals(&extracted, observation, &[])?;
         let mut candidates = BTreeMap::new();
         let mut candidate_scores = BTreeMap::<String, f64>::new();
@@ -676,14 +699,11 @@ impl MemoryService {
         }
         let candidates = bounded;
         let proposals = classifier
-            .reconcile(observation, extracted, candidates.clone())
+            .reconcile_for_operation(observation, extracted, candidates.clone(), job)
             .await?;
         validate_proposals(&proposals, observation, &candidates)?;
-        if job.correction_target.is_some() {
-            ensure!(
-                proposals.len() == 1,
-                "Invalid classifier: targeted correction must produce one atomic claim; submit additional claims separately"
-            );
+        if job.correction_target.is_some() && proposals.len() != 1 {
+            return Err(ProposalValidationError::CorrectionCardinality.into());
         }
         let mut embedded = Vec::new();
         for proposal in proposals {
@@ -1324,33 +1344,71 @@ fn validate_vectors(vectors: &[Vec<f32>], required: bool) -> Result<()> {
     }
     Ok(())
 }
-fn validate_proposals(
+/// Content-free errors safe to persist and use for a bounded classifier repair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalValidationError {
+    StructuredOutput,
+    ClaimCount,
+    Statement,
+    Evidence,
+    Candidate,
+    UnauthorizedCorrection,
+    CorrectionCardinality,
+}
+impl std::fmt::Display for ProposalValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self {
+            Self::StructuredOutput => "structured output failed typed JSON validation",
+            Self::ClaimCount => "expected 1..32 atomic claims",
+            Self::Statement => "empty or oversized claim",
+            Self::Evidence => "evidence index outside the supplied evidence array",
+            Self::Candidate => "relationship references an unknown candidate or revision",
+            Self::UnauthorizedCorrection => {
+                "correction relationships are not authorized classifier proposals"
+            }
+            Self::CorrectionCardinality => {
+                "targeted correction must produce one atomic claim; submit additional claims separately"
+            }
+        };
+        write!(formatter, "Invalid classifier: {reason}")
+    }
+}
+impl std::error::Error for ProposalValidationError {}
+
+/// Validate authority and references before accepting a proposal or attempting a repair.
+pub fn validate_proposals(
     proposals: &[Proposal],
     observation: &Observation,
     candidates: &[Claim],
-) -> Result<()> {
-    ensure!(
-        !proposals.is_empty() && proposals.len() <= 32,
-        "Invalid classifier: expected 1..32 atomic claims"
-    );
+) -> std::result::Result<(), ProposalValidationError> {
+    if proposals.is_empty() || proposals.len() > 32 {
+        return Err(ProposalValidationError::ClaimCount);
+    }
     for proposal in proposals {
-        ensure!(
-            !proposal.statement.trim().is_empty() && proposal.statement.len() <= 64 * 1024,
-            "Invalid classifier: empty or oversized claim"
-        );
-        ensure!(
-            proposal
-                .evidence_indices
+        if proposal.statement.trim().is_empty() || proposal.statement.len() > 64 * 1024 {
+            return Err(ProposalValidationError::Statement);
+        }
+        if proposal
+            .evidence_indices
+            .iter()
+            .any(|&i| i >= observation.request.evidence.len())
+        {
+            return Err(ProposalValidationError::Evidence);
+        }
+        if proposal
+            .relationships
+            .iter()
+            .any(|r| r.kind == RelationshipKind::Correction)
+        {
+            return Err(ProposalValidationError::UnauthorizedCorrection);
+        }
+        if !proposal.relationships.iter().all(|r| {
+            candidates
                 .iter()
-                .all(|&i| i < observation.request.evidence.len()),
-            "Invalid classifier: fabricated evidence"
-        );
-        ensure!(
-            proposal.relationships.iter().all(|r| candidates
-                .iter()
-                .any(|c| c.id == r.memory_id && c.revision == r.expected_revision)),
-            "Invalid classifier: unknown candidate or revision"
-        );
+                .any(|c| c.id == r.memory_id && c.revision == r.expected_revision)
+        }) {
+            return Err(ProposalValidationError::Candidate);
+        }
     }
     Ok(())
 }

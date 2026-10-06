@@ -110,6 +110,105 @@ async fn active(service: &MemoryService, context: &ClientContext, text: &str) ->
     service.status(context, &operation.id).await.unwrap()
 }
 
+struct RejectedClassification {
+    provider_error: bool,
+}
+#[async_trait]
+impl Classifier for RejectedClassification {
+    fn identity(&self) -> String {
+        "rejected-v1".into()
+    }
+    async fn extract(&self, observation: &Observation) -> Result<Vec<Proposal>> {
+        if self.provider_error {
+            anyhow::bail!(
+                "HTTP 403 provider request contained private-credential and private-statement"
+            );
+        }
+        let mut claims = Classification.extract(observation).await?;
+        claims[0].evidence_indices = vec![0];
+        Ok(claims)
+    }
+    async fn reconcile(
+        &self,
+        _: &Observation,
+        _: Vec<Proposal>,
+        _: Vec<Claim>,
+    ) -> Result<Vec<Proposal>> {
+        panic!("Rejected extraction cannot reach reconciliation")
+    }
+}
+
+#[tokio::test]
+async fn validation_failure_is_specific_and_provisional_claim_can_be_forgotten() {
+    let mut service = service().await;
+    service.classifier = Some(Arc::new(RejectedClassification {
+        provider_error: false,
+    }));
+    let context = context("project", Some("session"));
+    let accepted = service
+        .write(&context, write("Prefer plain text notes"))
+        .await
+        .unwrap();
+    service.process_next().await.unwrap();
+    let failed = service.status(&context, &accepted.id).await.unwrap();
+    assert_eq!(failed.state, JobState::Failed);
+    assert_eq!(failed.attempts, 1);
+    assert_eq!(
+        failed.error.as_deref(),
+        Some("Invalid classifier: evidence index outside the supplied evidence array")
+    );
+    let mut request = read("plain text notes");
+    request.include_provisional = true;
+    request.operation_id = Some(failed.id.clone());
+    let recalled = service.read(&context, request).await.unwrap();
+    let entries: Vec<_> = recalled
+        .memories
+        .iter()
+        .chain(&recalled.needs_verification)
+        .collect();
+    assert_eq!(entries.len(), 1);
+    let claim = &entries[0].memory;
+    assert_eq!(claim.lifecycle, Lifecycle::Provisional);
+    service
+        .delete(
+            &context,
+            serde_json::from_value(
+                serde_json::json!({"memory_id":claim.id,"expected_revision":claim.revision}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let store = service.store.lock().await;
+    assert!(store.state.claims.is_empty());
+    assert!(
+        !store
+            .state
+            .observations
+            .contains_key(&accepted.observation_id)
+    );
+}
+
+#[tokio::test]
+async fn provider_failure_does_not_persist_request_content_or_credentials() {
+    let mut service = service().await;
+    service.classifier = Some(Arc::new(RejectedClassification {
+        provider_error: true,
+    }));
+    let context = context("project", Some("session"));
+    let accepted = service
+        .write(&context, write("Prefer plain text notes"))
+        .await
+        .unwrap();
+    service.process_next().await.unwrap();
+    let failed = service.status(&context, &accepted.id).await.unwrap();
+    assert_eq!(failed.state, JobState::Failed);
+    assert_eq!(
+        failed.error.as_deref(),
+        Some("Permanent provider or proposal validation failure")
+    );
+}
+
 #[tokio::test]
 async fn semantic_acceptance_reconciliation_and_unanchored_recall() {
     let service = service().await;

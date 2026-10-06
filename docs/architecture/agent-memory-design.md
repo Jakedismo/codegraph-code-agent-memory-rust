@@ -781,9 +781,15 @@ context/cost budget before adoption.
 
 The initial implementation resolves owner transport to private authenticated loopback IPC,
 project identity to a persisted UUID shared by Git worktrees, and background processing to
-the existing resolved Rig provider/model. Extraction and reconciliation share one JSON repair
-allowance per attempt, with a 120-second attempt deadline, three automatic attempts, and
-bounded retry backoff. Missing/incompatible configuration remains explicitly recoverable.
+the existing resolved Rig provider/model. Extraction and reconciliation share one typed-JSON
+or proposal-validation repair allowance per attempt, with a 120-second attempt deadline,
+up to three automatic attempts for transient failures, and bounded retry backoff.
+Missing/incompatible configuration remains explicitly recoverable.
+Validation checks claim cardinality, evidence indexes, candidate revisions, and relationship
+authorization before accepting either stage. Explicit corrections pass a service-authorized
+target and require one replacement claim; only the service mutates that target. Persisted
+validation diagnostics are specific and content-free; provider errors remain redacted.
+Failed operations retain provisional claims that can be explicitly recalled and forgotten.
 The retrieval streams use scoped HNSW/BM25 and native locator-edge candidates,
 database-side normalized `search::rrf()` through `fn::memory_fuse`, existing reranking,
 and bounded one-hop code context. Vector chunks collapse to claim identities before fusion;

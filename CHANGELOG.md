@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Memory classification and test cleanup
+
+- Extraction and reconciliation repair invalid proposal references as well as typed
+  JSON, sharing the existing bounded repair allowance. Evidence indexes and exact
+  candidate revisions are validated before classification results are accepted.
+- Authorized correction targets are supplied to classification, which must produce
+  one replacement claim. Classifier proposals cannot authorize other corrections.
+- Failed jobs expose specific content-free validation diagnostics while retaining
+  provider error redaction and provisional semantic recall.
+- CLI test cleanup deletes tracked provisional claims after failed classification,
+  without counting the stored operation failure again as a cleanup command failure.
+
 ### Changed - Memory environment configuration
 
 - Project `.env` and exported variables configure automatic memory enablement,
