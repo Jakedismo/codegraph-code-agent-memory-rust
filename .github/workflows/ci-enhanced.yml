@@ -45,7 +45,7 @@ jobs:
       should-test: ${{ steps.changes.outputs.should-test }}
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
       with:
         fetch-depth: 0
 
@@ -89,7 +89,7 @@ jobs:
       audit-passed: ${{ steps.audit.outcome == 'success' }}
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
@@ -190,7 +190,7 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Install Rust ${{ matrix.rust }}
       uses: dtolnay/rust-toolchain@master
@@ -276,7 +276,7 @@ jobs:
     if: needs.pre-check.outputs.should-test == 'true'
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
@@ -322,7 +322,7 @@ jobs:
     if: needs.pre-check.outputs.should-test == 'true'
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
@@ -377,7 +377,7 @@ jobs:
             artifact_name: codegraph-macos-amd64
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
@@ -444,7 +444,7 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -503,7 +503,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
