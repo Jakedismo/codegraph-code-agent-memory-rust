@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Database-native memory retrieval
+
+- Scoped HNSW, BM25, and native locator-edge candidates now fuse inside SurrealDB
+  using `search::rrf()` and the bundled `fn::memory_fuse` query function.
+- Vector chunks collapse to logical claim identities before ranking. Empty streams
+  do not dilute scores; deterministic ties resolve before bounded truncation.
+- Background reconciliation uses the same hybrid candidate queries. Historical
+  candidate computation retains version-specific vectors and uses native fusion.
+- Offline query-plan tests confirm HNSW/BM25 index use and native locator traversal.
+
 ### Changed - Native memory persistence
 
 - Memory schema v2 stores typed, queryable claims, observations, revisions, jobs,

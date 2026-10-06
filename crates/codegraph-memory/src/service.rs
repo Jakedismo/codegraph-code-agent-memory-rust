@@ -273,43 +273,39 @@ impl MemoryService {
                 result,
             );
         }
-        let (semantic, lexical) = if request.as_of.is_some() {
-            // Historical embeddings are retained in revisions, not the current HNSW partition.
-            (
-                rank_semantic(&eligible, &query),
-                rank_lexical(&eligible, &request.query),
-            )
+        let ranked = if request.as_of.is_some() {
+            // Historical versions retain their own vectors; fusion still runs in SurrealDB.
+            let graph = eligible
+                .values()
+                .filter(|claim| {
+                    claim
+                        .anchors
+                        .iter()
+                        .any(|anchor| request.node_ids.contains(&anchor.node_id))
+                })
+                .map(|claim| claim.id.clone())
+                .take(100)
+                .collect();
+            store
+                .fuse_lists(vec![
+                    rank_semantic(&eligible, &query),
+                    rank_lexical(&eligible, &request.query),
+                    graph,
+                ])
+                .await?
         } else {
             store
-                .candidates(
+                .hybrid_candidates(
                     &identity,
                     &request.query,
                     query.clone(),
                     eligible.keys().cloned().collect(),
+                    request.node_ids.clone(),
+                    Vec::new(),
                 )
                 .await?
         };
-        let graph: Vec<_> = eligible
-            .values()
-            .filter(|v| {
-                v.anchors
-                    .iter()
-                    .any(|a| request.node_ids.contains(&a.node_id))
-            })
-            .map(|v| v.id.clone())
-            .take(100)
-            .collect();
-        let streams: Vec<_> = [semantic, lexical, graph]
-            .into_iter()
-            .filter(|v| !v.is_empty())
-            .collect();
-        let mut scores: BTreeMap<String, f64> = BTreeMap::new();
-        for stream in &streams {
-            for (rank, id) in stream.iter().enumerate() {
-                *scores.entry(id.clone()).or_default() +=
-                    1.0 / (60.0 + rank as f64 + 1.0) / streams.len() as f64;
-            }
-        }
+        let mut scores: BTreeMap<String, f64> = ranked.into_iter().collect();
         // Constraints are applicability-filtered before reserving their pack capacity.
         for claim in eligible.values().filter(|v| v.tier == Tier::Core) {
             scores.entry(claim.id.clone()).or_insert(0.0);
@@ -617,21 +613,25 @@ impl MemoryService {
                 })
                 .map(|v| v.id.clone())
                 .collect();
-            let (semantic, lexical) = store
-                .candidates(
+            let ranked = store
+                .hybrid_candidates(
                     &self.embedder.identity()?,
                     &proposed.statement,
                     query,
                     eligible,
+                    observation
+                        .request
+                        .anchors
+                        .iter()
+                        .map(|anchor| anchor.node_id.clone())
+                        .collect(),
+                    Vec::new(),
                 )
                 .await?;
-            for stream in [semantic, lexical] {
-                for (rank, id) in stream.into_iter().enumerate() {
-                    if let Some(claim) = store.state.claims.get(&id) {
-                        *candidate_scores.entry(id.clone()).or_default() +=
-                            1.0 / (61.0 + rank as f64);
-                        candidates.insert(id, claim.clone());
-                    }
+            for (id, score) in ranked {
+                if let Some(claim) = store.state.claims.get(&id) {
+                    *candidate_scores.entry(id.clone()).or_default() += score;
+                    candidates.insert(id, claim.clone());
                 }
             }
         }

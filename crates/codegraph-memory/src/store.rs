@@ -87,6 +87,9 @@ impl Store {
     }
 
     async fn initialize(db: Surreal<Any>) -> Result<Self> {
+        db.query(include_str!("../../../schema/agent_memory_queries.surql"))
+            .await?
+            .check()?;
         let info: Value = db.query("INFO FOR DB").await?.check()?.take(0)?;
         let info = records::serde_json_value(info)?;
         let has_table = |table: &str| info["tables"].get(table).is_some();
@@ -335,38 +338,77 @@ impl Store {
         Ok(())
     }
 
-    pub async fn candidates(
+    pub async fn hybrid_candidates(
         &self,
         identity: &str,
         query: &str,
         vector: Vec<f32>,
         eligible: Vec<String>,
-    ) -> Result<(Vec<String>, Vec<String>)> {
+        node_ids: Vec<String>,
+        graph_candidates: Vec<String>,
+    ) -> Result<Vec<(String, f64)>> {
         if eligible.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(Vec::new());
         }
         ensure!(
             self.state.embedding_identity.as_deref() == Some(identity),
             "Memory embedding identity is incompatible; re-embedding is required"
         );
         let table = vector_table(identity)?;
-        let mut results = self.db.query(format!(
-            "SELECT memory_id, vector::distance::knn() AS distance FROM {table} WHERE memory_id INSIDE $eligible AND vector <|100,200|> $vector ORDER BY distance; SELECT memory_id, search::score(1) AS score FROM memory_claim WHERE memory_id INSIDE $eligible AND statement @1@ $query ORDER BY score DESC LIMIT 100;"
-        )).bind(("eligible",eligible)).bind(("vector",vector)).bind(("query",query.to_string())).await?.check()?;
-        let semantic: Vec<serde_json::Value> = results.take(0)?;
-        let lexical: Vec<serde_json::Value> = results.take(1)?;
-        let ids = |rows: Vec<serde_json::Value>| {
-            let mut ids = Vec::new();
-            for row in rows {
-                if let Some(id) = row["memory_id"].as_str()
-                    && !ids.iter().any(|v| v == id)
-                {
-                    ids.push(id.to_string());
-                }
-            }
-            ids
-        };
-        Ok((ids(semantic), ids(lexical)))
+        let mut response=self.db.query(format!(
+            "LET $chunks = SELECT memory_id, vector::distance::knn() AS distance FROM {table} WHERE memory_id INSIDE $eligible AND vector <|400,800|> $vector;
+             LET $semantic = SELECT memory_id AS id, math::min(distance) AS distance FROM $chunks GROUP BY memory_id ORDER BY distance ASC,id ASC LIMIT 100;
+             LET $lexical = SELECT memory_id AS id, search::score(1) AS score FROM memory_claim WHERE memory_id INSIDE $eligible AND statement @1@ $query ORDER BY score DESC,id ASC LIMIT 100;
+             LET $linked = SELECT in.memory_id AS memory_id FROM memory_link WHERE in.memory_id INSIDE $eligible AND revision=in.revision AND out.node_id INSIDE $node_ids;
+             LET $graph = SELECT memory_id AS id FROM memory_claim WHERE memory_id INSIDE $eligible AND (memory_id INSIDE $linked.memory_id OR memory_id INSIDE $graph_candidates) ORDER BY id ASC LIMIT 100;
+             RETURN fn::memory_fuse([$semantic,$lexical,$graph]);"
+        )).bind(("eligible",eligible)).bind(("vector",vector)).bind(("query",query.to_string()))
+            .bind(("node_ids",node_ids)).bind(("graph_candidates",graph_candidates)).await?.check()?;
+        let index = response.num_statements() - 1;
+        let rows: Vec<serde_json::Value> = response.take(index)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok((
+                    row["id"]
+                        .as_str()
+                        .context("Missing fused memory ID")?
+                        .into(),
+                    row["score"].as_f64().context("Missing fused score")?,
+                ))
+            })
+            .collect()
+    }
+    pub async fn fuse_lists(&self, lists: Vec<Vec<String>>) -> Result<Vec<(String, f64)>> {
+        ensure!(
+            lists.len() <= 4 && lists.iter().all(|list| list.len() <= 100),
+            "Unbounded fusion candidates"
+        );
+        let lists: Vec<_> = lists
+            .into_iter()
+            .map(|list| {
+                list.into_iter()
+                    .map(|id| json!({"id":id}))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let rows: Vec<serde_json::Value> = self
+            .db
+            .query("RETURN fn::memory_fuse($lists)")
+            .bind(("lists", lists))
+            .await?
+            .check()?
+            .take(0)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok((
+                    row["id"]
+                        .as_str()
+                        .context("Missing fused memory ID")?
+                        .into(),
+                    row["score"].as_f64().context("Missing fused score")?,
+                ))
+            })
+            .collect()
     }
 }
 pub(crate) fn vector_table(identity: &str) -> Result<String> {
@@ -563,5 +605,98 @@ mod tests {
             .take(0)
             .unwrap();
         assert_eq!(statements, vec!["Preserve scalar scoring"]);
+    }
+
+    #[tokio::test]
+    async fn native_fusion_collapses_chunks_and_uses_hnsw_bm25_and_locator_edges() {
+        let mut store = Store::initialize(legacy(&fixture()).await).await.unwrap();
+        let mut next = store.state.clone();
+        next.claims.get_mut("claim-a").unwrap().vectors = vec![vec![1.0, 0.0, 0.0]; 3];
+        let mut other = next.claims["claim-a"].clone();
+        other.id = "claim-b".into();
+        other.statement = "Cats prefer naps".into();
+        other.anchors.clear();
+        other.vectors = vec![vec![0.0, 1.0, 0.0]];
+        next.claims.insert(other.id.clone(), other);
+        store.commit(next).await.unwrap();
+        let ranked = store
+            .hybrid_candidates(
+                "mock-v1",
+                "missing",
+                vec![1.0, 0.0, 0.0],
+                vec!["claim-a".into()],
+                vec![],
+                vec![],
+            )
+            .await
+            .unwrap();
+        assert_eq!(ranked.len(), 1);
+        assert!(
+            (ranked[0].1 - 1.0 / 61.0).abs() < 1e-12,
+            "Chunk duplicates must not accumulate RRF votes"
+        );
+        let ranked = store
+            .hybrid_candidates(
+                "mock-v1",
+                "missing",
+                vec![0.0, 1.0, 0.0],
+                vec!["claim-a".into(), "claim-b".into()],
+                vec!["nodes:score".into()],
+                vec![],
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            ranked[0].0, "claim-a",
+            "The native anchor stream contributes to fusion"
+        );
+        let table = vector_table("mock-v1").unwrap();
+        let vector_plan: Value = store
+            .db
+            .query(format!(
+                "SELECT memory_id FROM {table} WHERE vector <|10,100|> [1.0,0.0,0.0] EXPLAIN;"
+            ))
+            .await
+            .unwrap()
+            .check()
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert!(format!("{vector_plan:?}").contains("memory_vector_hnsw"));
+        let text_plan: Value = store
+            .db
+            .query("SELECT memory_id FROM memory_claim WHERE statement @1@ 'scoring' EXPLAIN;")
+            .await
+            .unwrap()
+            .check()
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert!(format!("{text_plan:?}").contains("memory_claim_text_v2"));
+    }
+
+    #[tokio::test]
+    async fn native_fusion_has_deterministic_ties_and_ignores_empty_streams() {
+        let store = Store::open(None).await.unwrap();
+        let a = (0..100)
+            .map(|index| format!("a{index:03}"))
+            .collect::<Vec<_>>();
+        let b = (0..100)
+            .map(|index| format!("b{index:03}"))
+            .collect::<Vec<_>>();
+        let ranked = store.fuse_lists(vec![a, b, vec![]]).await.unwrap();
+        assert_eq!(ranked.len(), 100);
+        assert_eq!(ranked[0].0, "a000");
+        assert_eq!(ranked[1].0, "b000");
+        assert_eq!(ranked[98].0, "a049");
+        assert_eq!(ranked[99].0, "b049");
+        assert!((ranked[0].1 - 1.0 / 122.0).abs() < 1e-12);
+        assert!(
+            store
+                .fuse_lists(vec![vec![], vec![]])
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

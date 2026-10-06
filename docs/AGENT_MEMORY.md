@@ -130,7 +130,12 @@ disputed, or review-due claims appear in `needs_verification`, including when
 feedback never clear review requirements.
 
 Semantic and BM25 candidates are filtered by authority/scope/applicability before
-selection, fused with graph association signals, and passed to the existing reranker
+selection. SurrealDB collapses embedding chunks to claim identities, retrieves native
+locator-edge candidates, and fuses the bounded streams with `search::rrf()` through
+`fn::memory_fuse` in `schema/agent_memory_queries.surql`. Deterministic tie-breaking
+precedes truncation; empty streams do not dilute scores. Historical versions retain
+their own vector/lexical candidate calculation and use the same database fusion.
+Fused claims are passed to the existing reranker
 when configured. A reranker failure returns declared partial semantic results.
 An embedding failure or incompatible identity cannot become lexical-only recall.
 

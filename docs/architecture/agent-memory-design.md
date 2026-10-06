@@ -779,8 +779,11 @@ project identity to a persisted UUID shared by Git worktrees, and background pro
 the existing resolved Rig provider/model. Extraction and reconciliation share one JSON repair
 allowance per attempt, with a 120-second attempt deadline, three automatic attempts, and
 bounded retry backoff. Missing/incompatible configuration remains explicitly recoverable.
-The initial retrieval streams use scoped HNSW/BM25 candidates, normalized RRF, existing
-reranking, and bounded one-hop code context. Review horizons and core rules are documented
+The retrieval streams use scoped HNSW/BM25 and native locator-edge candidates,
+database-side normalized `search::rrf()` through `fn::memory_fuse`, existing reranking,
+and bounded one-hop code context. Vector chunks collapse to claim identities before fusion;
+ties resolve deterministically before truncation. Historical versions retain their own
+candidate computation while using the same database-side fusion. Review horizons and core rules are documented
 in the usage guide. Remaining choices include measured threshold/weight calibration,
 retention quotas, proactive index-event maintenance, semantic anchor remapping, and large-store cache sizing and incremental persistence performance.
 
