@@ -100,6 +100,14 @@ impl EmbeddingGenerator {
         Ok(identity)
     }
 
+    /// Semantic memory must reject oversized provider inputs rather than lose claim text.
+    pub fn enforce_untruncated_inputs(&mut self) {
+        #[cfg(feature = "jina")]
+        if let Some(provider) = &mut self.jina_provider {
+            provider.disable_truncation();
+        }
+    }
+
     pub fn new(config: ModelConfig) -> Self {
         let tokenizer_path = PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -805,6 +813,84 @@ impl EmbeddingGenerator {
         self.encode_text(text).await
     }
 
+    /// Embed free-text documents with the existing passage task and actual tokenizer limits.
+    /// Preserve paragraph/whitespace boundaries; oversized leaves use UTF-8-safe cuts.
+    pub async fn embed_document_text(&self, text: &str) -> Result<Vec<Vec<f32>>> {
+        self.embed_texts_batched(&self.document_chunks(text)?).await
+    }
+
+    fn document_chunks(&self, text: &str) -> Result<Vec<String>> {
+        if text.trim().is_empty() {
+            return Err(CodeGraphError::Vector(
+                "Cannot embed an empty document".into(),
+            ));
+        }
+        let fits = |part: &str| -> bool {
+            if let Some(policy) = &self.input_policy {
+                return policy.prepare(part, false).is_ok();
+            }
+            #[cfg(feature = "openai")]
+            if self.model_config.model_name.starts_with("text-embedding-") {
+                return tiktoken_rs::bpe_for_model(&self.model_config.model_name).is_ok_and(
+                    |tokenizer| {
+                        tokenizer.encode_ordinary(part).len() <= self.model_config.max_tokens
+                    },
+                );
+            }
+            self.tokenizer
+                .encode(part, true)
+                .is_ok_and(|v| v.len() <= self.model_config.max_tokens)
+        };
+        let skip = std::env::var("CODEGRAPH_EMBEDDING_SKIP_CHUNKING")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        if skip && !fits(text) {
+            return Err(CodeGraphError::Vector(
+                "Document exceeds provider tokenizer budget with chunking disabled".into(),
+            ));
+        }
+        let mut chunks = Vec::new();
+        let mut rest = text;
+        while !rest.is_empty() {
+            if fits(rest) {
+                chunks.push(rest.to_string());
+                break;
+            }
+            let boundaries: Vec<usize> = rest.char_indices().map(|(i, _)| i).skip(1).collect();
+            let mut lo = 0;
+            let mut hi = boundaries.len();
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if fits(&rest[..boundaries[mid]]) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            if lo == 0 {
+                return Err(CodeGraphError::Vector(
+                    "A character cannot fit the provider input budget".into(),
+                ));
+            }
+            let maximum = boundaries[lo - 1];
+            let prefix = &rest[..maximum];
+            let cut = prefix
+                .rfind("\n\n")
+                .map(|i| i + 2)
+                .or_else(|| prefix.rfind('\n').map(|i| i + 1))
+                .filter(|&i| i >= maximum / 2)
+                .unwrap_or(maximum);
+            let chunk = &rest[..cut];
+            if !fits(chunk) {
+                return Err(CodeGraphError::Vector(
+                    "Chunk input validation failed".into(),
+                ));
+            }
+            chunks.push(chunk.to_string());
+            rest = &rest[cut..];
+        }
+        Ok(chunks)
+    }
+
     /// Generate embeddings for multiple texts in batches for GPU optimization.
     /// This method processes texts in batches to maximize GPU utilization.
     pub fn configure_index_cache(
@@ -1005,4 +1091,86 @@ fn simple_hash(text: &str) -> u32 {
         hash = hash.wrapping_mul(33).wrapping_add(byte as u32);
     }
     hash
+}
+
+#[cfg(test)]
+mod memory_document_tests {
+    use super::*;
+
+    fn generator() -> EmbeddingGenerator {
+        let mut generator = EmbeddingGenerator::default();
+        generator.input_policy = Some(
+            crate::input_policy::InputPolicy::new(
+                Tokenizer::from_file(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tokenizers/qwen2.5-coder.json"
+                ))
+                .unwrap(),
+                32,
+                "search_document: ".into(),
+                "search_query: ".into(),
+                2,
+                "memory-fixture",
+            )
+            .unwrap(),
+        );
+        generator
+    }
+    #[test]
+    fn free_text_chunks_preserve_unicode_whitespace_and_complete_input_budgets() {
+        if !test_env::run(
+            concat!(
+                module_path!(),
+                "::free_text_chunks_preserve_unicode_whitespace_and_complete_input_budgets"
+            ),
+            &[("CODEGRAPH_EMBEDDING_SKIP_CHUNKING", None)],
+        ) {
+            return;
+        }
+        let generator = generator();
+        let text = "  café 世界 🦕\n\n  preserve negation: do not reorder\n".repeat(80);
+        let chunks = generator.document_chunks(&text).unwrap();
+        assert!(chunks.len() > 1);
+        assert_eq!(chunks.concat(), text);
+        for chunk in &chunks {
+            assert!(
+                generator
+                    .input_policy
+                    .as_ref()
+                    .unwrap()
+                    .prepare(chunk, false)
+                    .is_ok()
+            );
+        }
+        assert_eq!(
+            generator.document_chunks("  short statement\n").unwrap(),
+            vec!["  short statement\n"]
+        );
+        assert!(generator.document_chunks(" \n").is_err());
+    }
+    #[test]
+    fn free_text_skip_chunking_rejects_oversized_observations() {
+        if !test_env::run(
+            concat!(
+                module_path!(),
+                "::free_text_skip_chunking_rejects_oversized_observations"
+            ),
+            &[("CODEGRAPH_EMBEDDING_SKIP_CHUNKING", Some("1"))],
+        ) {
+            return;
+        }
+        assert!(
+            generator()
+                .document_chunks(&"  世界\n".repeat(200))
+                .unwrap_err()
+                .to_string()
+                .contains("chunking disabled")
+        );
+    }
+    mod test_env {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/support/env.rs"
+        ));
+    }
 }

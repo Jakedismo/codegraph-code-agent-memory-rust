@@ -44,3 +44,8 @@ exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**", "**/dist
 
 # Storage has no section here: each project uses an embedded store at <project>/.codegraph/db
 # unless CODEGRAPH_SURREALDB_URL points at a SurrealDB server.
+[memory]
+# Automatic context in the four agent workflows is explicitly opt-in.
+enabled = false
+token_budget = 3000
+limit = 10

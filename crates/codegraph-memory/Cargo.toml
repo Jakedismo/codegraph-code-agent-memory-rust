@@ -1,0 +1,26 @@
+[package]
+name = "codegraph-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+codegraph-core.workspace = true
+codegraph-vector.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+schemars = { workspace = true, features = ["chrono04"] }
+tokenizers.workspace = true
+tiktoken-rs = "0.12.0"
+surrealdb = { version = "3.3.0", features = ["kv-mem", "kv-surrealkv"] }
+
+[dev-dependencies]
+tempfile.workspace = true

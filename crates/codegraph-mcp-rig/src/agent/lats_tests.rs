@@ -37,6 +37,24 @@ fn grounding_requires_successful_tool_observations_not_prose_or_budget_notes() {
     }))]));
 }
 
+#[test]
+fn memory_does_not_ground_graph_answers_and_refs_stay_in_selected_history() {
+    let memory = |reference: &str| {
+        Message::tool_result(CallId::from_wire("memory-call"),ToolName::new("get_hub_nodes").unwrap(),json!({"tool":"get_hub_nodes","error":"graph unavailable","memory_context":{"retrieved_memory_refs":[reference]}}).to_string())
+    };
+    let selected = vec![memory("memory:selected@1")];
+    let sibling = vec![memory("memory:sibling@1")];
+    assert!(!has_graph_observation(&selected));
+    let refs = branch_memory_refs(&selected, vec!["memory:baseline@1".into()]);
+    assert!(refs.contains(&"memory:selected@1".into()));
+    assert!(refs.contains(&"memory:baseline@1".into()));
+    assert!(!refs.contains(&"memory:sibling@1".into()));
+    assert_eq!(
+        branch_memory_refs(&sibling, Vec::new()),
+        vec!["memory:sibling@1"]
+    );
+}
+
 #[cfg(feature = "ollama")]
 mod mock_model {
     use super::*;

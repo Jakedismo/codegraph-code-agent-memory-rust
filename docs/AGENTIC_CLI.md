@@ -275,6 +275,12 @@ and [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks).
 
 ## Implementation boundary
 
+Builds with `memory` expose semantic memory CLI/MCP tools; `full` also enables
+background classification and automatic agent context. See [agent memory usage](AGENT_MEMORY.md)
+for configuration, scopes, operation readiness, code evidence, corrections, and forgetting.
+Automatic retrieval is opt-in (`[memory] enabled = true` or `--memory on`). Init includes
+memory guidance in both instruction files, including provider-independent setup.
+
 `AgenticTool` owns the common focus-to-workflow selection. MCP handlers and CLI
 commands both call `CodeGraphMCPServer`'s shared agentic workflow; only MCP attaches
 peer-based progress notifications. The workflow produces a transport-independent

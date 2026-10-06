@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Semantic agent memory
+
+- Working CLI and MCP memory interfaces: semantic `write`, `read`, `update`, and
+  `delete`, plus CLI status/wait/retry, owner service controls, and explicit re-embedding.
+- Independent durable project/session/user stores, stable project/worktree identity,
+  revision checks, idempotency, history, evidence provenance, and complete forgetting.
+- An authenticated local owner continues durable background jobs after clients exit.
+  Bounded LLM extraction/reconciliation uses the configured provider; deterministic
+  policy assigns working/durable/core/archive tiers without requiring agent choices.
+- Semantic recall reuses existing embeddings and reranking. Optional code grounding
+  includes historical/current snippets, directed graph paths, and source fingerprints;
+  unanchored memories remain retrievable. Relevant stale/disputed claims are returned
+  under `needs_verification`.
+- Opt-in automatic retrieval in all four agent workflows, tokenizer-aware packing,
+  exact retrieved/cited revisions, and branch-local ReAct/LATS discovery context.
+- `codegraph init` adds memory guidance to both project-local instruction files;
+  `--no-index` remains provider-independent and does not open memory stores.
+- Memory configuration, CLI examples, readiness states, and current implementation
+  boundaries are documented in `docs/AGENT_MEMORY.md`; README now describes the
+  shipped feature. Live retrieval quality and large-store performance are unmeasured.
+
 ### 🐛 **Fixed - LATS graph grounding**
 
 - Rig LATS candidates now execute native graph-tool loops through the same

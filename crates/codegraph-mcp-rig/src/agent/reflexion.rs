@@ -93,6 +93,10 @@ impl RigAgentTrait for ReflexionAgent {
         self.inner.take_tool_call_count()
     }
 
+    fn memory_refs(&self) -> Vec<String> {
+        self.inner.memory_refs()
+    }
+
     fn take_tool_traces(&self) -> Vec<crate::tools::ToolTrace> {
         self.inner.take_tool_traces()
     }

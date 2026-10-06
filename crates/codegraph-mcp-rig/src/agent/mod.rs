@@ -25,4 +25,6 @@ pub struct RigAgentOutput {
     pub duration_ms: u64,
     /// Tool call trace for deterministic post-processing
     pub tool_traces: Vec<crate::tools::ToolTrace>,
+    #[serde(default)]
+    pub memory_refs: Vec<String>,
 }

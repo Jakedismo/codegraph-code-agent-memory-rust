@@ -1105,6 +1105,7 @@ dependencies = [
  "codegraph-graph",
  "codegraph-mcp-core",
  "codegraph-mcp-tools",
+ "codegraph-memory",
  "codegraph-vector",
  "futures",
  "rig-agent",
@@ -1135,6 +1136,7 @@ dependencies = [
  "codegraph-mcp-daemon",
  "codegraph-mcp-rig",
  "codegraph-mcp-tools",
+ "codegraph-memory",
  "codegraph-vector",
  "colored",
  "dirs 7.0.0",
@@ -1179,6 +1181,28 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "codegraph-memory"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "codegraph-core",
+ "codegraph-vector",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "surrealdb",
+ "tempfile",
+ "tiktoken-rs",
+ "tokenizers 0.23.2",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

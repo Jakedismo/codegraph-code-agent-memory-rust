@@ -18,6 +18,7 @@ openai = []
 anthropic = []
 ollama = []
 xai = []
+memory = ["dep:codegraph-memory"]
 
 [dependencies]
 # Provider contracts and the companion agent runtime split out in Rig 0.43.
@@ -29,6 +30,7 @@ codegraph-core = { path = "../codegraph-core" }
 codegraph-mcp-core = { path = "../codegraph-mcp-core" }
 codegraph-mcp-tools = { path = "../codegraph-mcp-tools" }
 codegraph-graph = { path = "../codegraph-graph" }
+codegraph-memory = { path = "../codegraph-memory", optional = true }
 
 # Async runtime
 tokio = { workspace = true }

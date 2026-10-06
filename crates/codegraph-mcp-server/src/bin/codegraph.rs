@@ -84,6 +84,12 @@ enum Commands {
         action: agent_cli::AgentCommand,
     },
 
+    #[command(about = "Semantic agent memory and durable background operations")]
+    Memory {
+        #[command(subcommand)]
+        action: codegraph_mcp_server::memory_cli::MemoryCommand,
+    },
+
     #[command(about = "Emit agent guidance or install project-local harness hooks")]
     Hooks {
         #[command(subcommand)]
@@ -557,6 +563,10 @@ fn main() -> Result<()> {
     if let Commands::Hooks { ref action } = cli.command {
         return agent_hooks::run(action);
     }
+    if let Commands::Memory { ref action } = cli.command {
+        // SAFETY: No application threads or async runtime have been started.
+        return unsafe { codegraph_mcp_server::memory_cli::run(action, cli.config.as_deref()) };
+    }
     if let Commands::Init {
         ref path,
         hooks,
@@ -626,7 +636,10 @@ async fn run_cli(cli: Cli) -> Result<()> {
     let config = config_mgr.config();
 
     match cli.command {
-        Commands::Init { .. } | Commands::Agent { .. } | Commands::Hooks { .. } => {
+        Commands::Init { .. }
+        | Commands::Agent { .. }
+        | Commands::Hooks { .. }
+        | Commands::Memory { .. } => {
             unreachable!("handled before configuration")
         }
         Commands::Start {

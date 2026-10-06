@@ -170,3 +170,11 @@ For significant modifications:
 CodeGraph is project-scoped: it indexes the repository workspace, not third-party dependency source trees (e.g. downloaded crates, `node_modules/`, `site-packages/`).
 
 When a question is about third-party library behavior, prefer library documentation or API references rather than expecting CodeGraph to show vendored source.
+When memory tools are available, submit meaningful observations with evidence through
+`memory_write`; CodeGraph handles classification, tiers, and reconciliation. Use
+`memory_read` for semantic recall and `memory_update`/`memory_delete` for correction,
+evidence-backed confirmation, and precise forgetting. Inspect operation readiness;
+acceptance does not mean background reconciliation is complete. Non-code memories
+remain retrievable without anchors. Memory-aware agent workflows are explicitly opt-in
+and return relevant memories plus `needs_verification`; inspect warnings before relying
+on historical claims. Retrieval and usefulness feedback never establish verification.

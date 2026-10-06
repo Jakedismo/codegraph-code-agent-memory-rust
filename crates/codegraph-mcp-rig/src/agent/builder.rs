@@ -55,6 +55,8 @@ pub struct RigAgentBuilder {
     architecture: Option<AgentArchitecture>,
     #[allow(dead_code)]
     response_format: Option<serde_json::Value>,
+    #[cfg(feature = "memory")]
+    memory: Option<Arc<dyn crate::memory::MemoryDiscovery>>,
 }
 
 impl RigAgentBuilder {
@@ -74,7 +76,24 @@ impl RigAgentBuilder {
             max_turns,
             architecture,
             response_format: None,
+            #[cfg(feature = "memory")]
+            memory: None,
         }
+    }
+    #[cfg(feature = "memory")]
+    pub fn memory(mut self, memory: Arc<dyn crate::memory::MemoryDiscovery>) -> Self {
+        self.memory = Some(memory);
+        self
+    }
+    fn tool_factory(&self) -> GraphToolFactory {
+        let factory = GraphToolFactory::new(self.executor.clone());
+        #[cfg(feature = "memory")]
+        {
+            if let Some(memory) = &self.memory {
+                return factory.with_memory(memory.clone());
+            }
+        }
+        factory
     }
 
     /// Set required response format (JSON schema)
@@ -233,7 +252,7 @@ impl RigAgentBuilder {
 
         Ok(Box::new(LatsAgent::new(
             model,
-            GraphToolFactory::new(self.executor.clone()),
+            self.tool_factory(),
             self.max_turns,
             self.tier,
             self.get_max_output_tokens(),
@@ -258,7 +277,7 @@ impl RigAgentBuilder {
         let model = get_model_name();
         let system_prompt = self.system_prompt();
         let max_output_tokens = self.get_max_output_tokens();
-        let factory = GraphToolFactory::new(self.executor);
+        let factory = self.tool_factory();
 
         let agent = factory
             .agent_builder(client.completion(&model))
@@ -280,7 +299,7 @@ impl RigAgentBuilder {
         let model = get_model_name();
         let system_prompt = self.system_prompt();
         let max_output_tokens = self.get_max_output_tokens();
-        let factory = GraphToolFactory::new(self.executor);
+        let factory = self.tool_factory();
 
         let agent = factory
             .agent_builder(client.completion(&model))
@@ -301,7 +320,7 @@ impl RigAgentBuilder {
         let client = RigLLMAdapter::ollama_client()?;
         let model = get_model_name();
         let system_prompt = self.system_prompt();
-        let factory = GraphToolFactory::new(self.executor);
+        let factory = self.tool_factory();
 
         let agent = factory
             .agent_builder(client.completion(&model))
@@ -322,7 +341,7 @@ impl RigAgentBuilder {
         let model = get_model_name();
         let system_prompt = self.system_prompt();
         let max_output_tokens = self.get_max_output_tokens();
-        let factory = GraphToolFactory::new(self.executor);
+        let factory = self.tool_factory();
 
         let agent = factory
             .agent_builder(client.completion(&model))
@@ -344,7 +363,7 @@ impl RigAgentBuilder {
         let model = get_model_name();
         let system_prompt = self.system_prompt();
         let max_output_tokens = self.get_max_output_tokens();
-        let factory = GraphToolFactory::new(self.executor);
+        let factory = self.tool_factory();
 
         let agent = factory
             .agent_builder(client.completion(&model))
@@ -366,7 +385,7 @@ impl RigAgentBuilder {
         let model = get_model_name();
         let system_prompt = self.system_prompt();
         let max_output_tokens = self.get_max_output_tokens();
-        let factory = GraphToolFactory::new(self.executor);
+        let factory = self.tool_factory();
 
         let agent = factory
             .agent_builder(client.completion(&model))

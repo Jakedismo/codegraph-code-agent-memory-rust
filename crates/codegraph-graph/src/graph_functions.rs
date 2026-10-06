@@ -133,6 +133,31 @@ impl GraphFunctions {
         self.db.clone()
     }
 
+    /// Bounded one-hop code context for optional memory anchors; never crosses project scope.
+    pub async fn memory_code_context(&self, node_ids: &[String]) -> Result<serde_json::Value> {
+        let ids: Vec<String> = node_ids
+            .iter()
+            .take(32)
+            .map(|id| {
+                if id.starts_with("nodes:") {
+                    id.clone()
+                } else {
+                    format!("nodes:{id}")
+                }
+            })
+            .collect();
+        let mut response = self.db.query(
+            "LET $roots = SELECT * FROM nodes WHERE project_id = $project AND type::string(id) INSIDE $ids LIMIT 32; LET $edges = SELECT * FROM edges WHERE project_id = $project AND (from INSIDE $roots.id OR to INSIDE $roots.id) LIMIT 64; LET $nodes = SELECT id,name,file_path,start_line,end_line,content,metadata FROM nodes WHERE project_id = $project AND (id INSIDE $roots.id OR id INSIDE $edges.from OR id INSIDE $edges.to) LIMIT 32; RETURN { nodes: $nodes, edges: $edges, files: (SELECT file_path,content_hash FROM file_metadata WHERE project_id = $project AND file_path INSIDE $nodes.file_path LIMIT 32), graph_complete: (SELECT VALUE metadata.stats.graph_complete FROM project_metadata WHERE project_id = $project LIMIT 1)[0], input_fingerprint: (SELECT VALUE metadata.input_fingerprint FROM project_metadata WHERE project_id = $project LIMIT 1)[0] };"
+        ).bind(("project",self.project_id.clone())).bind(("ids",ids)).await
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?.check()
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?;
+        let final_statement = response.num_statements().saturating_sub(1);
+        let value: SurrealValue = response
+            .take(final_statement)
+            .map_err(|e| CodeGraphError::Database(e.to_string()))?;
+        Ok(surreal_to_json(value))
+    }
+
     fn default_project_id() -> String {
         let env_value = std::env::var("CODEGRAPH_PROJECT_ID")
             .ok()

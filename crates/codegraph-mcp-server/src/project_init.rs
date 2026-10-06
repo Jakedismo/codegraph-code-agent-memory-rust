@@ -134,7 +134,11 @@ fn guidance_changes(project: &Path) -> Result<Vec<GuidanceChange>> {
                 }
             };
             let contents = merge_guidance(&original)
-                .with_context(|| format!("Cannot update {}", path.display()))?;
+                .with_context(|| format!("Cannot update {}", path.display()))?
+                .replace(
+                    "{{CODEGRAPH_PROJECT_ROOT}}",
+                    &serde_json::to_string(&project.display().to_string())?,
+                );
             Ok(GuidanceChange {
                 path,
                 changed: original != contents,

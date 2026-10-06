@@ -49,4 +49,8 @@ pub trait RigAgentTrait: Send + Sync {
 
     /// Get and reset tool traces since last query
     fn take_tool_traces(&self) -> Vec<crate::tools::ToolTrace>;
+    /// References actually delivered to the answer's branch, including the shared baseline.
+    fn memory_refs(&self) -> Vec<String> {
+        Vec::new()
+    }
 }

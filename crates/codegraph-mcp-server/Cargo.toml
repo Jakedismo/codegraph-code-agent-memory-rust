@@ -39,12 +39,14 @@ all-embeddings = [
     "embeddings-local"
 ]
 daemon = ["dep:codegraph-mcp-daemon"]
+memory = ["dep:codegraph-memory", "codegraph-mcp-rig?/memory"]
 # Full features for cargo install --features full
 full = [
     "daemon",
     "ai-enhanced",
     "server-http",
-    "all-embeddings"
+    "all-embeddings",
+    "memory"
 ]
 
 [dependencies]
@@ -55,6 +57,7 @@ codegraph-mcp-daemon = { path = "../codegraph-mcp-daemon", optional = true }
 codegraph-core = { path = "../codegraph-core" }
 codegraph-graph = { path = "../codegraph-graph" }
 codegraph-vector = { path = "../codegraph-vector" }
+codegraph-memory = { path = "../codegraph-memory", optional = true }
 rmcp = { workspace = true }
 futures = { workspace = true }
 schemars = { workspace = true }

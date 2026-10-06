@@ -37,11 +37,15 @@ fn fit_to_budget(tool_name: &str, result: JsonValue, remaining: usize) -> JsonVa
     if result.to_string().len() <= remaining {
         return result;
     }
-    // Room for the wrapper and the note itself.
-    const OVERHEAD: usize = 600;
+    // Charge all metadata, including injected memory, rather than assuming a fixed wrapper size.
     if let Some(items) = result.get("result").and_then(|r| r.as_array()) {
         let mut kept = Vec::new();
-        let mut used = OVERHEAD;
+        let mut wrapper = result.clone();
+        if let Some(object) = wrapper.as_object_mut() {
+            object.insert("result".into(), json!([]));
+            object.insert("_budget".into(),json!({"dropped_items":items.len(),"reason":"This run's tool-result budget is nearly used up; later items were dropped."}));
+        }
+        let mut used = wrapper.to_string().len();
         for item in items {
             let size = item.to_string().len() + 1;
             if used + size > remaining {
@@ -92,6 +96,12 @@ pub struct CountingExecutor {
     traces: Arc<Mutex<Vec<ToolTrace>>>,
     result_budget: usize,
     result_bytes: Arc<AtomicUsize>,
+    #[cfg(feature = "memory")]
+    memory: Option<Arc<dyn crate::memory::MemoryDiscovery>>,
+    #[cfg(feature = "memory")]
+    memory_rounds: Arc<AtomicUsize>,
+    #[cfg(feature = "memory")]
+    memory_refs: Arc<Mutex<Vec<String>>>,
 }
 
 impl CountingExecutor {
@@ -111,6 +121,53 @@ impl CountingExecutor {
             traces: Arc::new(Mutex::new(Vec::new())),
             result_budget,
             result_bytes: Arc::new(AtomicUsize::new(0)),
+            #[cfg(feature = "memory")]
+            memory: None,
+            #[cfg(feature = "memory")]
+            memory_rounds: Arc::new(AtomicUsize::new(0)),
+            #[cfg(feature = "memory")]
+            memory_refs: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    #[cfg(feature = "memory")]
+    pub fn with_memory(mut self, memory: Arc<dyn crate::memory::MemoryDiscovery>) -> Self {
+        let baseline = memory.baseline();
+        self.result_bytes.fetch_add(
+            serde_json::to_string(&baseline).map_or(0, |v| v.len()),
+            Ordering::SeqCst,
+        );
+        self.memory_refs = Arc::new(Mutex::new(baseline.retrieved_memory_refs));
+        self.memory = Some(memory);
+        self
+    }
+    pub fn fork_branch(&self) -> Self {
+        let mut fork = self.clone();
+        #[cfg(feature = "memory")]
+        {
+            fork.memory_rounds = Arc::new(AtomicUsize::new(0));
+            fork.memory_refs = Arc::new(Mutex::new(
+                self.memory_refs
+                    .lock()
+                    .map(|v| v.clone())
+                    .unwrap_or_default(),
+            ));
+        }
+        #[cfg(not(feature = "memory"))]
+        let _ = &mut fork;
+        fork
+    }
+    pub fn memory_refs(&self) -> Vec<String> {
+        #[cfg(feature = "memory")]
+        {
+            self.memory_refs
+                .lock()
+                .map(|v| v.clone())
+                .unwrap_or_default()
+        }
+        #[cfg(not(feature = "memory"))]
+        {
+            Vec::new()
         }
     }
 
@@ -118,11 +175,48 @@ impl CountingExecutor {
     pub async fn execute(&self, tool_name: &str, params: JsonValue) -> Result<JsonValue> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         match self.inner.execute(tool_name, params.clone()).await {
-            Ok(result) => {
+            Ok(mut result) => {
+                #[cfg(feature = "memory")]
+                if let Some(memory) = &self.memory
+                    && self.memory_rounds.fetch_add(1, Ordering::SeqCst) < 2
+                {
+                    if let Ok(mut context) = memory.discover(&result).await {
+                        let delivered = self.memory_refs();
+                        context
+                            .memories
+                            .retain(|v| !delivered.contains(&v.reference));
+                        // A review warning stays visible even if this revision was
+                        // delivered as ordinary memory earlier in the workflow.
+                        context.retrieved_memory_refs = context
+                            .memories
+                            .iter()
+                            .chain(&context.needs_verification)
+                            .map(|v| v.reference.clone())
+                            .collect();
+                        if context.retrieved_memory_refs.is_empty() && context.status == "ok" {
+                            context.status = "empty".into();
+                        }
+                        if let Some(object) = result.as_object_mut() {
+                            object.insert("memory_context".into(), serde_json::to_value(context)?);
+                        }
+                    }
+                }
+                #[cfg(not(feature = "memory"))]
+                let _ = &mut result;
                 let offered = result.to_string().len();
                 let used = self.result_bytes.load(Ordering::SeqCst);
                 let remaining = self.result_budget.saturating_sub(used);
                 let result = fit_to_budget(tool_name, result, remaining);
+                #[cfg(feature = "memory")]
+                if let Some(refs) = result["memory_context"]["retrieved_memory_refs"].as_array()
+                    && let Ok(mut delivered) = self.memory_refs.lock()
+                {
+                    for reference in refs.iter().filter_map(|v| v.as_str()) {
+                        if !delivered.iter().any(|v| v == reference) {
+                            delivered.push(reference.into());
+                        }
+                    }
+                }
                 let returned = result.to_string().len();
                 let total = self.result_bytes.fetch_add(returned, Ordering::SeqCst) + returned;
                 info!(
@@ -233,6 +327,13 @@ mod tests {
             json!({ "tool": "calculate_coupling_metrics", "result": { "big": "y".repeat(5_000) } });
         let fitted = fit_to_budget("calculate_coupling_metrics", object, 1_000);
         assert_eq!(fitted["_budget"]["exhausted"], true);
+    }
+    #[test]
+    fn memory_wrappers_are_charged_before_graph_rows_are_kept() {
+        let mut result = rows(10, 1000);
+        result["memory_context"] = json!({"memories":[{"statement":"m".repeat(2500)}]});
+        let fitted = fit_to_budget("semantic_code_search", result, 4000);
+        assert!(fitted.to_string().len() <= 4000);
     }
 
     #[test]

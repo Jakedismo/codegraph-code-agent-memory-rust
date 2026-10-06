@@ -20,6 +20,8 @@ pub struct RigExecutor {
     executor: Arc<GraphToolExecutor>,
     /// Conversation history for multi-turn interactions
     history: Vec<ConversationTurn>,
+    #[cfg(feature = "memory")]
+    memory: Option<Arc<dyn crate::memory::MemoryDiscovery>>,
 }
 
 /// A single turn in the conversation
@@ -41,7 +43,15 @@ impl RigExecutor {
         Self {
             executor,
             history: Vec::new(),
+            #[cfg(feature = "memory")]
+            memory: None,
         }
+    }
+
+    #[cfg(feature = "memory")]
+    pub fn memory(mut self, memory: Arc<dyn crate::memory::MemoryDiscovery>) -> Self {
+        self.memory = Some(memory);
+        self
     }
 
     /// Execute an analysis query
@@ -53,7 +63,7 @@ impl RigExecutor {
         let start = Instant::now();
 
         info!(
-            query = %query,
+            query_bytes = query.len(),
             analysis_type = ?analysis_type,
             history_len = self.history.len(),
             "Starting Rig agent execution"
@@ -79,6 +89,10 @@ impl RigExecutor {
             // Future: Trigger summary if > 0.95
         }
 
+        #[cfg(feature = "memory")]
+        if let Some(memory) = &self.memory {
+            builder = builder.memory(memory.clone());
+        }
         let agent = builder.build()?;
 
         debug!(
@@ -95,40 +109,41 @@ impl RigExecutor {
         };
 
         // Execute with automatic Reflexion fallback
-        let (response, tool_calls, tool_traces) = match agent.execute(&contextualized_query).await {
-            Ok(resp) => {
-                let calls = agent.take_tool_call_count();
-                let traces = agent.take_tool_traces();
-                (resp, calls, traces)
-            }
-            Err(e) => {
-                info!(
-                    error = %e,
-                    "Primary agent execution failed. Initiating Reflexion auto-recovery..."
-                );
+        let (response, tool_calls, tool_traces, memory_refs) =
+            match agent.execute(&contextualized_query).await {
+                Ok(resp) => {
+                    let calls = agent.take_tool_call_count();
+                    let traces = agent.take_tool_traces();
+                    (resp, calls, traces, agent.memory_refs())
+                }
+                Err(e) => {
+                    info!(
+                        error = %e,
+                        "Primary agent execution failed. Initiating Reflexion auto-recovery..."
+                    );
 
-                // Wrap the primary agent in ReflexionAgent for retry
-                let reflexion_agent = crate::agent::reflexion::ReflexionAgent {
-                    inner: agent,
-                    max_retries: 2,
-                };
+                    // Wrap the primary agent in ReflexionAgent for retry
+                    let reflexion_agent = crate::agent::reflexion::ReflexionAgent {
+                        inner: agent,
+                        max_retries: 2,
+                    };
 
-                // Retry execution with self-correction
-                match reflexion_agent.execute(&contextualized_query).await {
-                    Ok(resp) => {
-                        let calls = reflexion_agent.take_tool_call_count();
-                        let traces = reflexion_agent.take_tool_traces();
-                        (resp, calls, traces)
-                    }
-                    Err(final_err) => {
-                        return Err(anyhow::anyhow!(
-                            "Agent failed after Reflexion recovery: {}",
-                            final_err
-                        ));
+                    // Retry execution with self-correction
+                    match reflexion_agent.execute(&contextualized_query).await {
+                        Ok(resp) => {
+                            let calls = reflexion_agent.take_tool_call_count();
+                            let traces = reflexion_agent.take_tool_traces();
+                            (resp, calls, traces, reflexion_agent.memory_refs())
+                        }
+                        Err(final_err) => {
+                            return Err(anyhow::anyhow!(
+                                "Agent failed after Reflexion recovery: {}",
+                                final_err
+                            ));
+                        }
                     }
                 }
-            }
-        };
+            };
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -153,6 +168,7 @@ impl RigExecutor {
             tool_calls,
             duration_ms,
             tool_traces,
+            memory_refs,
         })
     }
 
@@ -164,9 +180,14 @@ impl RigExecutor {
         query: &str,
         analysis_type: AnalysisType,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<AgentEvent>> + Send>>> {
-        let agent = RigAgentBuilder::new(self.executor.clone())
-            .analysis_type(analysis_type)
-            .build()?;
+        let builder = RigAgentBuilder::new(self.executor.clone()).analysis_type(analysis_type);
+        #[cfg(feature = "memory")]
+        let builder = if let Some(memory) = &self.memory {
+            builder.memory(memory.clone())
+        } else {
+            builder
+        };
+        let agent = builder.build()?;
 
         let contextualized_query = if self.history.is_empty() {
             query.to_string()
@@ -186,10 +207,16 @@ impl RigExecutor {
     ) -> Result<RigAgentOutput> {
         let start = Instant::now();
 
-        let agent = RigAgentBuilder::new(self.executor.clone())
+        let builder = RigAgentBuilder::new(self.executor.clone())
             .analysis_type(analysis_type)
-            .tier(tier)
-            .build()?;
+            .tier(tier);
+        #[cfg(feature = "memory")]
+        let builder = if let Some(memory) = &self.memory {
+            builder.memory(memory.clone())
+        } else {
+            builder
+        };
+        let agent = builder.build()?;
 
         let contextualized_query = if self.history.is_empty() {
             query.to_string()
@@ -201,6 +228,7 @@ impl RigExecutor {
         let duration_ms = start.elapsed().as_millis() as u64;
         let tool_calls = agent.take_tool_call_count();
         let tool_traces = agent.take_tool_traces();
+        let memory_refs = agent.memory_refs();
 
         let turn = ConversationTurn {
             query: query.to_string(),
@@ -215,6 +243,7 @@ impl RigExecutor {
             tool_calls,
             duration_ms,
             tool_traces,
+            memory_refs,
         })
     }
 

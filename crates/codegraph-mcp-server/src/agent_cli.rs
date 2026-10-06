@@ -63,6 +63,13 @@ pub struct AgentQuery {
     /// JSON preserves the complete MCP response; text prints its answer field.
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
     format: OutputFormat,
+    /// Override explicit automatic-memory configuration for this invocation.
+    #[arg(long,default_value="auto",value_parser=["auto","on","off"])]
+    memory: String,
+    #[arg(long)]
+    session_id: Option<String>,
+    #[arg(long)]
+    context_epoch: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -176,6 +183,25 @@ unsafe fn prepare_environment(request: &AgentQuery, config_path: Option<&Path>) 
     }
     // SAFETY: The caller guarantees configuration precedes worker startup.
     unsafe { codegraph_core::config_manager::ConfigManager::initialize_environment() };
+    // SAFETY: Preparation runs before worker startup.
+    unsafe {
+        if request.memory != "auto" {
+            std::env::set_var(
+                "CODEGRAPH_MEMORY_ENABLED",
+                if request.memory == "on" {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        }
+        if let Some(id) = &request.session_id {
+            std::env::set_var("CODEGRAPH_MEMORY_SESSION_ID", id);
+        }
+        if let Some(epoch) = &request.context_epoch {
+            std::env::set_var("CODEGRAPH_MEMORY_CONTEXT_EPOCH", epoch);
+        }
+    }
     if let Some(project_id) = &request.project_id {
         if project_id.trim().is_empty() {
             bail!("--project-id must not be blank");

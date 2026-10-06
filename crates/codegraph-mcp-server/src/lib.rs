@@ -9,6 +9,9 @@ pub mod agentic_tools;
 pub mod http_config;
 #[cfg(feature = "server-http")]
 pub mod http_server;
+pub mod memory_cli;
+#[cfg(feature = "memory")]
+pub mod memory_runtime;
 pub mod official_server;
 pub mod project_init;
 pub mod prompts;

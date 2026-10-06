@@ -99,6 +99,10 @@ impl RigAgentTrait for OpenAIAgent {
         self.factory.take_call_count()
     }
 
+    fn memory_refs(&self) -> Vec<String> {
+        self.factory.memory_refs()
+    }
+
     fn take_tool_traces(&self) -> Vec<crate::tools::ToolTrace> {
         self.factory.take_traces()
     }
@@ -150,6 +154,10 @@ impl RigAgentTrait for AnthropicAgent {
 
     fn take_tool_call_count(&self) -> usize {
         self.factory.take_call_count()
+    }
+
+    fn memory_refs(&self) -> Vec<String> {
+        self.factory.memory_refs()
     }
 
     fn take_tool_traces(&self) -> Vec<crate::tools::ToolTrace> {
@@ -205,6 +213,10 @@ impl RigAgentTrait for OllamaAgent {
         self.factory.take_call_count()
     }
 
+    fn memory_refs(&self) -> Vec<String> {
+        self.factory.memory_refs()
+    }
+
     fn take_tool_traces(&self) -> Vec<crate::tools::ToolTrace> {
         self.factory.take_traces()
     }
@@ -256,6 +268,10 @@ impl RigAgentTrait for XAIAgent {
 
     fn take_tool_call_count(&self) -> usize {
         self.factory.take_call_count()
+    }
+
+    fn memory_refs(&self) -> Vec<String> {
+        self.factory.memory_refs()
     }
 
     fn take_tool_traces(&self) -> Vec<crate::tools::ToolTrace> {

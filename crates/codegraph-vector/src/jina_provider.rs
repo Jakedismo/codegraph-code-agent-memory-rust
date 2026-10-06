@@ -533,6 +533,11 @@ impl JinaEmbeddingProvider {
         })
     }
 
+    /// Reject oversized memory input rather than silently truncate its claims.
+    pub fn disable_truncation(&mut self) {
+        self.config.truncate = false;
+    }
+
     /// Update the batch size for embedding generation
     pub fn set_batch_size(&mut self, batch_size: usize) {
         let clamped = batch_size

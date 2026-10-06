@@ -44,3 +44,11 @@ reindex merely because this guidance was injected. Internal graph analysis tools
 are for CodeGraph's built-in agents; use only the four agentic commands above.
 
 Reload this guidance with `codegraph agent instructions` after context loss.
+For semantic agent memory, use `codegraph memory write|read|update|delete`.
+Writes return durable operation/readiness metadata; `codegraph memory status|wait|retry`
+inspects background work. Builds need the `memory` feature (included in `full`);
+semantic operations need embeddings and reconciliation needs the configured LLM.
+Automatic context is explicitly enabled with `[memory] enabled = true` or `--memory on`
+on any agent command. Inspect `memory_context.needs_verification`; missing code anchors
+do not invalidate non-code memories. Scope defaults to project; user scope is explicit,
+and session scope requires a client-supplied `--session-id`.

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/codegraph-core",
+    "crates/codegraph-memory",
     "crates/codegraph-vector",
     "crates/codegraph-parser",
     "crates/codegraph-mcp",

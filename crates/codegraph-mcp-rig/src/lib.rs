@@ -11,3 +11,5 @@ pub use agent::RigAgentOutput;
 pub use agent::builder::RigAgentBuilder;
 pub use agent::executor::RigExecutor;
 pub use tools::ToolTrace;
+#[cfg(feature = "memory")]
+pub mod memory;

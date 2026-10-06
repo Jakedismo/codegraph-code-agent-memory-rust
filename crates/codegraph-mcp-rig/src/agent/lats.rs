@@ -62,12 +62,12 @@ impl SearchNode {
 /// LATS agent that explores multiple reasoning paths
 pub struct LatsAgent {
     model: DynModel<Completion>,
-    agent: rig_agent::Agent,
     factory: GraphToolFactory,
     max_turns: usize,
     tier: ContextTier,
     max_output_tokens: u64,
     system_prompt: String,
+    selected_memory_refs: std::sync::Mutex<Vec<String>>,
 }
 
 /// System prompt for generating one candidate step of the search tree.
@@ -217,21 +217,14 @@ impl LatsAgent {
         max_output_tokens: u64,
         system_prompt: String,
     ) -> Self {
-        let agent = factory
-            .agent_builder(model.clone())
-            .preamble(format!(
-                "{system_prompt}\n\n# LATS candidate\n{EXPANSION_SYSTEM_PROMPT}"
-            ))
-            .max_tokens(max_output_tokens)
-            .build();
         Self {
             model,
-            agent,
             factory,
             max_turns,
             tier,
             max_output_tokens,
             system_prompt,
+            selected_memory_refs: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -277,8 +270,16 @@ impl LatsAgent {
                 i + 1
             );
             futures.push(async move {
-                let response = self
-                    .agent
+                let factory = self.factory.fork_branch();
+                let agent = factory
+                    .agent_builder(self.model.clone())
+                    .preamble(format!(
+                        "{}\n\n# LATS candidate\n{}",
+                        self.system_prompt, EXPANSION_SYSTEM_PROMPT
+                    ))
+                    .max_tokens(self.max_output_tokens)
+                    .build();
+                let response = agent
                     .prompt(prompt)
                     .history(history.clone())
                     .max_turns(self.max_turns)
@@ -376,7 +377,7 @@ impl LatsAgent {
 #[async_trait]
 impl RigAgentTrait for LatsAgent {
     async fn execute(&self, query: &str) -> Result<String> {
-        info!("Starting LATS execution for query: {}", query);
+        info!(query_bytes = query.len(), "Starting LATS execution");
 
         // Initialize Tree
         let mut nodes = HashMap::new();
@@ -416,14 +417,22 @@ impl RigAgentTrait for LatsAgent {
         let id = best_node(&nodes)
             .ok_or_else(|| anyhow!("LATS did not obtain a successful graph-tool observation"))?;
         let node = &nodes[&id];
+        if let Ok(mut refs) = self.selected_memory_refs.lock() {
+            *refs = branch_memory_refs(&node.history, self.factory.memory_refs());
+        }
         if let Some(answer) = final_answer(&node.content) {
             return Ok(answer.to_string());
         }
 
         // Turn the selected evidence-bearing branch into an answer if the search budget
         // ended on an intermediate step. The same tool registry and byte budget apply.
-        let response = self
-            .agent
+        let selected_factory = self.factory.fork_branch();
+        let selected_agent = selected_factory
+            .agent_builder(self.model.clone())
+            .preamble(&self.system_prompt)
+            .max_tokens(self.max_output_tokens)
+            .build();
+        let response = selected_agent
             .prompt(format!(
                 "Answer the original question now from this branch's graph observations: {query}. \
                  State any missing evidence. Return the answer, not another candidate step."
@@ -432,6 +441,11 @@ impl RigAgentTrait for LatsAgent {
             .history(node.history.clone())
             .max_turns(self.max_turns)
             .await?;
+        if let Ok(mut refs) = self.selected_memory_refs.lock() {
+            refs.extend(selected_factory.memory_refs());
+            refs.sort();
+            refs.dedup();
+        }
         Ok(final_answer(&response.output)
             .unwrap_or(&response.output)
             .to_string())
@@ -476,6 +490,37 @@ impl RigAgentTrait for LatsAgent {
     fn take_tool_traces(&self) -> Vec<crate::tools::ToolTrace> {
         self.factory.take_traces()
     }
+    fn memory_refs(&self) -> Vec<String> {
+        self.selected_memory_refs
+            .lock()
+            .map(|v| v.clone())
+            .unwrap_or_default()
+    }
+}
+
+fn branch_memory_refs(history: &[Message], mut refs: Vec<String>) -> Vec<String> {
+    for message in history {
+        if let Message::User { content } = message {
+            for content in content {
+                if let UserContent::ToolResult(tool) = content {
+                    for item in &tool.content {
+                        if let Ok(value) = item.deserialize_json::<Value>() {
+                            if let Some(found) =
+                                value["memory_context"]["retrieved_memory_refs"].as_array()
+                            {
+                                refs.extend(
+                                    found.iter().filter_map(|v| v.as_str()).map(str::to_string),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    refs
 }
 
 #[cfg(test)]

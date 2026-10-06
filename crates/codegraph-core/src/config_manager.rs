@@ -52,6 +52,34 @@ pub struct CodeGraphConfig {
     /// Daemon configuration for automatic file watching
     #[serde(default)]
     pub daemon: DaemonConfig,
+    /// Explicitly enabled automatic memory context; direct memory tools are independent.
+    #[serde(default)]
+    pub memory: MemoryConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "memory_budget")]
+    pub token_budget: usize,
+    #[serde(default = "memory_limit")]
+    pub limit: usize,
+}
+fn memory_budget() -> usize {
+    3000
+}
+fn memory_limit() -> usize {
+    10
+}
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token_budget: 3000,
+            limit: 10,
+        }
+    }
 }
 
 /// Embedding provider configuration
@@ -679,6 +707,9 @@ impl ConfigManager {
 
     /// Apply environment variable overrides
     fn apply_env_overrides(mut config: CodeGraphConfig) -> CodeGraphConfig {
+        if let Ok(value) = std::env::var("CODEGRAPH_MEMORY_ENABLED") {
+            config.memory.enabled = matches!(value.to_lowercase().as_str(), "true" | "1" | "on");
+        }
         // Embedding configuration
         if let Ok(provider) = std::env::var("CODEGRAPH_EMBEDDING_PROVIDER") {
             config.embedding.provider = provider;

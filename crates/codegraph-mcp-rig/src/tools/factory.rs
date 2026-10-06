@@ -18,6 +18,19 @@ impl GraphToolFactory {
             executor: CountingExecutor::new(executor),
         }
     }
+    #[cfg(feature = "memory")]
+    pub fn with_memory(mut self, memory: Arc<dyn crate::memory::MemoryDiscovery>) -> Self {
+        self.executor = self.executor.with_memory(memory);
+        self
+    }
+    pub fn fork_branch(&self) -> Self {
+        Self {
+            executor: self.executor.fork_branch(),
+        }
+    }
+    pub fn memory_refs(&self) -> Vec<String> {
+        self.executor.memory_refs()
+    }
 
     /// Register the same graph tools for ReAct and LATS over the shared counted executor.
     pub(crate) fn agent_builder(

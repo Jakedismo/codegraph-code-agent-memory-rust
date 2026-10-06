@@ -6,16 +6,16 @@
 
 `codegraph-agent-memory` combines a semantically searchable code graph with persistent agent memory. It brings code relationships, architectural rationale, previous findings, reusable procedures, and task history into the context an AI coding agent needs for its next change.
 
-The code graph explains how the project fits together. Memory preserves what was learned while working on it: why a design was chosen, which approaches failed, what constraints matter, and where an interrupted task left off. A shared context service is designed to select relevant knowledge alongside current code evidence, within the consuming model's context budget.
+The code graph explains how the project fits together. Memory preserves what was learned while working on it: why a design was chosen, which approaches failed, what constraints matter, and where an interrupted task left off. A shared context service selects relevant knowledge alongside current code evidence, within the consuming model's context budget.
 
-> **Development status:** This README describes the CodeGraph foundation and the planned memory refactor. The supplied October 2026 memory design is a revised proposal, not an implemented feature set. Memory tools, automatic memory retrieval, background processing, and memory-specific setup guidance below describe the target behavior; availability must follow the stage actually shipped.
+> **Feature status:** Persistent semantic memory is implemented. Full-feature builds provide CLI/MCP memory tools, durable background classification and reconciliation, automatic retrieval in all four agent workflows, code grounding, and project setup guidance. Automatic retrieval is opt-in. See the [memory usage guide](docs/AGENT_MEMORY.md) for configuration, readiness states, and current limits; live task quality and large-store performance remain to be evaluated.
 >
 > The project name is `codegraph-agent-memory`. Command examples retain the existing `codegraph` executable, `.codegraph` paths, and `CODEGRAPH_*` settings used by the design. A package or executable rename is not assumed.
 
 - [Installation Guide](docs/INSTALLATION_GUIDE.md)
 - [Usage Guide](docs/USAGE_GUIDE.md)
 - [Agent CLI and project-local hooks](docs/AGENTIC_CLI.md)
-- [Persistent agent memory](#persistent-agent-memory-planned)
+- [Persistent agent memory](#persistent-agent-memory)
 - [Architecture](#architecture)
 
 ## Why code context and memory belong together
@@ -63,11 +63,11 @@ Optional `focus` values narrow the analysis:
 | `agentic_architecture` | `structure`, `api_surface` | Both |
 | `agentic_quality` | `complexity`, `coupling`, `hotspots` | Comprehensive assessment |
 
-Memory-aware operation is an explicit project/client setting in the proposed design. Once enabled, all four workflows retrieve relevant memories automatically. Their emphasis guides ranking; it does not restrict a workflow to particular memory kinds. A procedure or a requirement without a code anchor can matter to any workflow.
+Memory-aware operation is an explicit project/client setting: configure `[memory] enabled = true`, set `CODEGRAPH_MEMORY_ENABLED=true`, or pass `--memory on` to an agent command. Once enabled, all four workflows retrieve relevant memories automatically. Their emphasis guides ranking; it does not restrict a workflow to particular memory kinds. A procedure or a requirement without a code anchor can matter to any workflow.
 
 ### How memory enters a workflow
 
-The shared context service is designed to retrieve relevant memories and verification warnings before reasoning starts. As code discovery finds useful symbols and graph paths, bounded follow-up retrieval can add relevant knowledge before the answer is finalized.
+The shared context service retrieves relevant memories and verification warnings before reasoning starts. As code discovery finds useful symbols and graph paths, bounded follow-up retrieval can add relevant knowledge before the answer is finalized.
 
 The final result preserves the existing answer and code findings, and adds structured memory context:
 
@@ -79,7 +79,7 @@ The final result preserves the existing answer and code findings, and adds struc
 
 Retrieving a memory does not mean the answer cited it. Neither retrieval nor citation verifies the claim. Successful retrieval with no matches is also distinct from disabled, unavailable, or partial memory access.
 
-## Persistent agent memory (planned)
+## Persistent agent memory
 
 The calling agent submits an observation and its available evidence. The system handles claim extraction, classification, code anchoring, semantic reconciliation, retention, and placement in future context.
 
@@ -102,7 +102,7 @@ Code anchors are optional. Requirements, collaboration conventions, and rational
 
 ### Capture is deliberate
 
-The initial design processes observations deliberately submitted by an agent or authorized client integration. Useful capture points include decisions, meaningful outcomes, corrections, explicit preferences, and task handoffs.
+The implementation processes observations deliberately submitted by an agent or authorized client integration. Useful capture points include decisions, meaningful outcomes, corrections, explicit preferences, and task handoffs.
 
 It does not assume access to a client's full conversation history or automatically archive every tool call. Compact outcome summaries and small evidence excerpts are in scope; bulk transcript and diff ingestion are outside the initial scope. Automatic capture from trustworthy task/session events is a later integration.
 
@@ -135,13 +135,13 @@ An LLM proposes classification and reuse potential. Deterministic policy decides
 
 ### Semantic writing and background processing
 
-The proposed write pipeline separates acceptance from completed processing:
+The write pipeline separates acceptance from completed processing:
 
 1. Validate the observation, authorized scope, metadata, and provider input limits.
 2. Embed the observation and persist it with a provisional retrieval representation and a recoverable background job.
 3. Return an operation ID and explicit processing/embedding readiness.
 4. Extract atomic claims in a bounded background LLM job, preserving uncertainty, negation, conditions, and dates.
-5. Retrieve existing candidates, propose relationships, and resolve relevant code anchors.
+5. Retrieve existing candidates and propose relationships; enrich code anchors during recall when the code index is available.
 6. Validate the proposal and commit claims, revisions, provenance, relationships, and job completion transactionally.
 
 Default acknowledgement requires durable acceptance and semantic visibility to the originating session once the compatible embedding/index is ready. It does not mean classification is complete. Asynchronous acceptance explicitly reports pending embeddings. Provisional observations are session-visible or explicitly requested; they do not enter shared active context before reconciliation.
@@ -179,11 +179,11 @@ Paths preserve direction, edge type, resolution provenance, and whether a relati
 
 Processing readiness, embedding readiness, lifecycle, evidence state, and code grounding are separate signals. A fully processed memory can still be reported or disputed. A missing intended code anchor does not by itself prove a claim false.
 
-Re-indexing is designed to compare supporting evidence fingerprints and applicability. Changed or missing supporting evidence can trigger review; a change to merely related code must not invalidate a claim.
+Recall compares supporting source fingerprints and index readiness. Changed or missing supporting evidence triggers review; changes to merely related code do not invalidate a claim. Proactive index-event maintenance and semantic symbol remapping remain follow-up work.
 
 Relevant review-required memories appear in `needs_verification`, enabled by default for memory-aware workflows. Setting `include_stale: false` excludes stale claims from ordinary results while preserving relevant verification warnings. Deliberately non-code memories do not acquire warnings simply because they lack code anchors.
 
-The design separates event time, recording time, asserted validity, review deadlines, active expiry, and permanent purge policy. Historical reads can select claims valid at a requested time. Expiry stops ordinary active retrieval; it does not automatically erase history. Reading does not extend a TTL, refresh evidence, or confirm truth.
+The implementation separates event time, recording time, asserted validity, review deadlines, active expiry, and permanent purge policy. Historical reads can select claims valid at a requested time. Expiry stops ordinary active retrieval; it does not automatically erase history. Reading does not extend a TTL, refresh evidence, or confirm truth.
 
 Corrections create traceable revisions. Explicit confirmation requires a declared re-verification and evidence references; metadata edits and usefulness feedback are not confirmations.
 
@@ -191,7 +191,7 @@ Explicit forgetting removes selected content and affected derivatives, including
 
 ### Direct memory tools
 
-The proposed MCP surface adds four tools alongside the four agentic workflows:
+The MCP surface provides four tools alongside the four agentic workflows:
 
 | MCP tool | CLI equivalent | Purpose |
 | --- | --- | --- |
@@ -200,9 +200,16 @@ The proposed MCP surface adds four tools alongside the four agentic workflows:
 | `memory_update` | `codegraph memory update` | Correct a claim, update metadata, or explicitly confirm evidence |
 | `memory_delete` | `codegraph memory delete` | Forget precisely selected content and affected derivatives |
 
-Operational status and retry/wait support will expose background progress separately from recall. Exact CLI argument syntax and the memory-enablement setting are implementation choices; no new configuration flag is assumed here.
+`codegraph memory status <operation-id>`, `wait <operation-id>`, and `retry <operation-id>` expose background progress separately from recall. `memory service status/stop` manages the local owner, and `memory reembed` explicitly migrates embedding identities. Structured requests use `--input file.json` or `--input -` for stdin. See [memory usage](docs/AGENT_MEMORY.md).
 
-Illustrative `memory_write` input from the proposed contract:
+```bash
+codegraph memory write "Preserve scalar summation order in semantic scoring"
+codegraph memory read "What scoring constraints should I preserve?"
+codegraph memory write "Prefer short explanations" --scope user
+codegraph agent context "Explain semantic scoring" --memory on
+```
+
+Example `memory_write` input:
 
 ```json
 {
@@ -286,7 +293,7 @@ Symbol and definition requests retry transient LSP `ContentModified` (`-32801`) 
 
 ### Incremental indexing and embedding inputs
 
-Full, single-file, and watch indexing share project reconciliation. Unchanged sources reuse cached extraction artifacts, while reconciliation handles edits, renames, deletions, and retained callers. `--force` rebuilds derived code state without trusting the previous catalog. Under the memory design, it must preserve durable memory.
+Full, single-file, and watch indexing share project reconciliation. Unchanged sources reuse cached extraction artifacts, while reconciliation handles edits, renames, deletions, and retained callers. `--force` rebuilds derived code state without trusting the previous catalog. Durable memory lives in a separate store and is preserved.
 
 Embedding and semantic-resolution work have independent `sync`, `deferred`, and `off` policies:
 
@@ -302,7 +309,7 @@ Code chunks start from AST source spans. Units that fit the complete input budge
 
 Ollama requests use `truncate=false` so a context mismatch fails visibly. Prepared-vector cache identities include the model, task, tokenizer/runtime, and input policy. Changes to these settings can require re-embedding even when vector dimensions are unchanged.
 
-Memory is designed to reuse the same embedding and reranking interfaces, provider configuration, input validation, batching, and compatible runtime instances. Oversized observations and claims must not be silently truncated. The user store keeps a stable embedding identity independent of the calling project; queries are encoded per compatible space and ranked results are fused rather than comparing raw cosine scores across incompatible spaces.
+Memory reuses the same embedding and reranking interfaces, provider configuration, input validation, batching, and compatible runtime instances. Oversized observations and claims must not be silently truncated. The user store keeps a stable embedding identity independent of the calling project; queries are encoded per compatible space and ranked results are fused rather than comparing raw cosine scores across incompatible spaces.
 
 See [indexing configuration and invariants](docs/indexing-performance-work.md) and [reproducible benchmarks](docs/indexing-benchmarks.md) for detailed controls.
 
@@ -340,17 +347,17 @@ CODEGRAPH_TOOL_CONTENT_CHARS=2000
 CODEGRAPH_AGENT_RESULT_BUDGET_BYTES=400000
 ```
 
-The memory refactor extends budgeting to the complete code-and-memory pack using the consuming model's tokenizer, including wrappers, citations, warnings, and reserved workflow context. Unknown tokenizers require a declared conservative estimate with headroom. Retrieval calls, candidate counts, graph expansion, and elapsed time are bounded too.
+Memory context is packed against its configured allowance using the consuming model's tokenizer, including wrappers, citations, and warnings. Unknown tokenizers use a declared conservative UTF-8 byte estimate with headroom. Retrieval calls, candidate counts, graph expansion, and elapsed time are bounded too.
 
-Applicable mandatory constraints receive reserved space. If they cannot fit, the design requires an explicit budget error. Verification warnings take priority over optional surrounding graph detail, and repeated snippets or claim revisions are deduplicated.
+Applicable mandatory constraints receive reserved space. If they cannot fit, packing returns an explicit budget error. Verification warnings take priority over optional surrounding graph detail, and repeated snippets or claim revisions are deduplicated.
 
-Each reasoning run still has a bounded execution context. Persistent memory provides continuity across runs; the client remains responsible for its live conversation and session identity. ReAct and LATS must share retrieval semantics while keeping candidate-specific discoveries local to their branches. Unverified candidate conclusions are not automatically persisted as shared evidence.
+Each reasoning run still has a bounded execution context. Persistent memory provides continuity across runs; the client remains responsible for its live conversation and session identity. ReAct and LATS share retrieval semantics while keeping candidate-specific discoveries local to their branches. Unverified candidate conclusions are not automatically persisted as shared evidence.
 
 Memories retain their original authority. Learned procedures and core eligibility do not override user instructions, repository rules, or client permissions.
 
 ## Architecture
 
-The target architecture adds durable memory and shared context assembly to the existing code-analysis foundation:
+The implemented architecture adds durable memory and shared context assembly to the existing code-analysis foundation:
 
 ```text
                   Coding agent / authorized client hooks
@@ -386,21 +393,21 @@ The target architecture adds durable memory and shared context assembly to the e
                       providers and input policies
 ```
 
-The background LLM proposes classifications and relationships. Deterministic policy validates scope, authority, revisions, and permitted changes before persistence. Code links use stable logical IDs and source locators resolved against the current index; they do not depend on cross-database foreign references.
+The background LLM proposes classifications and relationships. Deterministic policy validates scope, authority, revisions, and permitted changes before persistence. Code links retain node IDs, source locators, and historical fingerprints, with current-index enrichment during recall; they do not depend on cross-database foreign references.
 
 ### Storage and ownership
 
 | Data | Location | Lifecycle |
 | --- | --- | --- |
 | Code index | `<project>/.codegraph/db` | Derived and rebuildable |
-| Project memory (proposed) | `<project>/.codegraph/memory-db` | Durable claims, history, provenance, and jobs |
-| User memory (proposed) | Under `~/.codegraph/` | Owner-scoped knowledge outside repositories |
+| Project memory | `<project>/.codegraph/memory-db` | Durable claims, history, provenance, and jobs |
+| User memory | `~/.codegraph/user-memory-db` | Owner-scoped knowledge outside repositories |
 
 Session records live in the appropriate memory store with session isolation. Index rebuilds, `--force`, schema bootstrap, and code-node deletion must not erase memory. Memory has its own migrations and explicit lifecycle operations. Recreating the code index means replacing only its derived store, never the entire `.codegraph` directory.
 
 The current embedded code store allows one owning process at a time. Stop a running project server before indexing that same store with another process, and use the server's in-process watcher for updates.
 
-The memory design extends ownership so CLI commands attach to an existing project owner. Multiple project servers will access user memory through a shared local owner. IPC discovery, access control, and crash recovery must be implemented before that concurrency is supported; the design does not permit competing embedded writers.
+Memory CLI commands and project servers attach to a shared OS-user owner through authenticated local IPC. Private discovery files and a lifetime lock prevent competing embedded writers. Accepted jobs continue after clients exit; durable leases recover interrupted work when a compatible client reconnects with provider settings. The memory owner does not open the code index.
 
 A shared SurrealDB server or Surreal Cloud remains an option for the code foundation. Cross-store memory operations must report each store's outcome, and server deployment does not imply organization/team memory permissions.
 
@@ -408,7 +415,7 @@ The existing [interactive architecture diagram](docs/architecture/codegraph-arch
 
 ## Quick start
 
-These steps use the existing CodeGraph build and code-analysis interface. Memory-specific enablement and CLI arguments will be documented as implementation lands.
+These steps enable code analysis and memory. Full-feature builds include both interfaces; direct semantic memory does not require a code index.
 
 ### 1. Build
 
@@ -423,7 +430,7 @@ The supplied foundation requires Rust 1.95 or newer and uses edition 2024. `Carg
 
 ### 2. Configure providers
 
-Indexing requires an embedding provider. Agentic reasoning requires an LLM; the proposed automatic memory extraction/reconciliation also requires an LLM capability. Put settings in a project `.env` or export them before startup:
+Indexing requires an embedding provider. Agentic reasoning requires an LLM; automatic memory extraction/reconciliation also requires a configured LLM. Put settings in a project `.env` or export them before startup:
 
 ```bash
 # Embeddings
@@ -440,7 +447,16 @@ ANTHROPIC_API_KEY="<your-api-key>"
 
 Replace placeholders with your settings. Set the model and its actual context window explicitly for reproducible behavior. Environment variables take precedence over configuration-file LLM settings. API keys are read from the environment.
 
-Memory is designed to reuse the existing embedding and reranking stack. Background model selection, processing budgets, and memory configuration syntax remain open implementation choices. The user store must not inherit incompatible project vectors.
+Memory reuses these providers and the configured LLM for bounded background processing. Enable automatic retrieval in your TOML configuration:
+
+```toml
+[memory]
+enabled = true
+token_budget = 3000
+limit = 10
+```
+
+Direct memory commands work independently of this automatic-retrieval setting. User-store embedding settings are pinned independently of project vectors.
 
 See [.env.example](.env.example) and [AI provider configuration](docs/AI_PROVIDERS.md).
 
@@ -458,7 +474,7 @@ codegraph index /path/to/project -l rust,typescript,python
 
 Initialization offers Claude Code, Codex, both, or no project-local hooks. It updates managed guidance in both `AGENTS.md` and `CLAUDE.md`, preserves unrelated instructions/settings, and leaves user-level harness configuration untouched. `--hooks none` still updates instructions and preserves existing hooks.
 
-The memory refactor will extend that guidance with observation capture, recall, correction, confirmation, forgetting, and `needs_verification`. Repeated initialization must remain idempotent. `--no-index` must install guidance without loading providers or models, opening memory stores, or performing memory operations. Installing instructions does not itself enable transcript capture or write memories.
+The managed guidance includes observation capture, recall, correction, confirmation, forgetting, and `needs_verification`. Repeated initialization is idempotent. `--no-index` installs guidance without loading providers or models, opening memory stores, or performing memory operations. Installing instructions does not itself enable transcript capture or write memories.
 
 The code index uses embedded SurrealDB/SurrealKV with no separate server to start. Indexing respects ignore rules and configured secret-file exclusions; review what is indexed and what evidence is deliberately submitted for memory.
 
@@ -491,7 +507,7 @@ codegraph daemon start /path/to/project --languages rust,typescript
 
 Changes are detected, debounced, and re-indexed. A standalone daemon cannot share the current embedded project store with a running server; a shared SurrealDB server is an alternative.
 
-In the memory design, re-indexing also schedules bounded evidence review while preserving durable knowledge and its historical locators.
+Re-indexing preserves durable knowledge and historical locators. Memory recall checks supporting fingerprints against current source; proactive evidence review from indexing events remains follow-up work.
 
 ## Configuration and providers
 
@@ -548,7 +564,7 @@ The schemas support embedding dimensions from 384 to 4096. Equal dimensions do n
 | `CODEGRAPH_ANALYZERS=0` | Disable analyzers independently of indexing tier |
 | `CODEGRAPH_SCIP_INDEX` | Compiler-index alternative to LSP, with source-validation requirements |
 
-Jina uses model-aware passage/query task pairing; explicit supported task settings are honored. Reindex after changing task or request options. Memory must apply the same validated input policies and report unavailable or partial semantic coverage when compatible indexes are not ready.
+Jina uses model-aware passage/query task pairing; explicit supported task settings are honored. Reindex after changing task or request options. Memory applies the same validated input policies and reports unavailable or partial semantic coverage when compatible indexes are not ready.
 
 ### Optional graph schema and boundary rules
 
@@ -591,22 +607,13 @@ Memory evaluation must separately measure semantic recall and precision, incorre
 
 Coding-task comparisons should include code-only retrieval, retrieval without classification, and the full memory-aware workflow under fixed context/cost budgets. Offline fixtures establish contracts, including scope isolation, recovery, correction, and forgetting; they do not establish production accuracy or speedups.
 
-## Memory implementation roadmap
+## Memory status and follow-up work
 
-The proposed sequence delivers capability in stages:
+The working feature includes separate durable stores and schema, stable project/worktree identity, owner coordination, semantic acceptance and recall, persistent background jobs, classification and reconciliation, revisions and forgetting, historical reads, evidence checks, tier policy, and integration with all four agent workflows. Init installs memory guidance in both agent instruction files.
 
-1. Establish operation/readiness contracts, scope policy, revision semantics, separate durable stores, migrations, and owner coordination.
-2. Deliver semantic observation acceptance, persistent jobs, bounded claim extraction/reconciliation, provenance, and semantic recall.
-3. Integrate a budgeted context pack into `agent context`, then impact, architecture, and quality, including discovery-triggered retrieval and verification warnings.
-4. Add evidence fingerprints, historical reads, review/retention maintenance, confirmation, correction, and complete forgetting.
-5. Extend project initialization guidance and hooks; add working-state handoff and evaluated core eligibility.
-6. Measure task utility and cost before broader automatic capture or consolidation.
+Remaining work includes live recall/task-quality and cost evaluation, large-store scaling, proactive index-event maintenance, semantic symbol remapping, client delivery acknowledgements, broader automatic capture, and derived consolidation. Organization/team memory requires an explicit sharing and permission model. These follow-ups do not block the current project/session/user memory tools.
 
-Every stage must expose pending and unavailable capabilities accurately. Broader profiles, procedure summaries, and episode consolidation are later derived views with traceable sources, not a prerequisite for initial memory.
-
-Open choices include background models and budgets, owner IPC, stable identity across project moves/clones, evidence fingerprints, review/retention policies, and how clients expose progress and disambiguation.
-
-Additional foundation directions remain more language support, cross-repository analysis, custom schemas, and analyzer plugins. Organization/team memory needs its own explicit sharing model.
+See [memory usage and implementation boundaries](docs/AGENT_MEMORY.md) and the [architecture design](docs/architecture/agent-memory-design.md).
 
 ## Philosophy
 
@@ -625,6 +632,7 @@ MIT
 - [Installation Guide](docs/INSTALLATION_GUIDE.md)
 - [Usage Guide](docs/USAGE_GUIDE.md)
 - [Agent CLI and hooks](docs/AGENTIC_CLI.md)
+- [Semantic memory usage](docs/AGENT_MEMORY.md)
 - [AI provider configuration](docs/AI_PROVIDERS.md)
 - [SurrealDB Cloud](https://surrealdb.com/cloud)
 - [Jina AI](https://jina.ai)
