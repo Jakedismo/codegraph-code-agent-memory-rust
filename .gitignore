@@ -189,3 +189,4 @@ todo.md
 journal.md
 .codex/
 .ruff_cache/
+codegraph.toml
