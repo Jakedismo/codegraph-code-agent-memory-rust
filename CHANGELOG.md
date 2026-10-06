@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit symbols resolve through bounded project/file-scoped native queries
   alongside semantic anchoring. Ambiguous definitions are not selected, and missing
   code grounding appears under `needs_verification` without hiding non-code memory.
+- The call-chain CLI evaluation seeds a unique workflow callee, avoiding ambiguity
+  between the real workflow definition and its feature-disabled stub while retaining
+  the current-code grounding assertions.
 
 ### Changed - Memory environment configuration
 

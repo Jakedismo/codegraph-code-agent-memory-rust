@@ -35,8 +35,10 @@ SEEDS = {
     ),
     5: (
         "crates/codegraph-mcp-server/src/official_server.rs",
-        "execute_agentic_workflow",
-        "Call-chain investigation: execute_agentic_workflow orchestrates the Rig agent backend before graph analysis tools execute.",
+        # execute_agentic_workflow also has a feature-disabled stub in this file.
+        # Use its unique callee so this seed does not require arbitrary disambiguation.
+        "create_progress_callback_with_message",
+        "Call-chain investigation: execute_agentic_workflow wires create_progress_callback_with_message into ProgressNotifier for graph analysis progress reporting.",
     ),
     6: (
         "crates/codegraph-mcp-server/src/official_server.rs",
