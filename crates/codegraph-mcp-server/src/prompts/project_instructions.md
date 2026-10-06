@@ -1,5 +1,13 @@
 # codegraph
 
+CodeGraph is a command-line interface (CLI) tool available as the `codegraph`
+executable on PATH. Run every `codegraph ...` command below through your Bash/shell
+execution tool, just as you would run `git` or `cargo`. For example:
+
+```bash
+codegraph agent context "Find the implementation and callers for <task>" --focus search
+```
+
 When `codegraph` is available, start code exploration with its agent tools. Ask a
 specific question about the task, relevant symbols or paths instead of starting
 with broad grep/rg searches:

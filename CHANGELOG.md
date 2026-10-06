@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - CLI instruction clarity
+
+- `codegraph init` instructions in `AGENTS.md` and `CLAUDE.md` identify CodeGraph as
+  a CLI executable on PATH and direct agents to invoke its commands through their
+  Bash/shell execution tool. Hook guidance and `codegraph agent instructions` use
+  the same wording and Bash examples.
+
 ### Fixed - Memory classification and test cleanup
 
 - Extraction and reconciliation repair invalid proposal references as well as typed

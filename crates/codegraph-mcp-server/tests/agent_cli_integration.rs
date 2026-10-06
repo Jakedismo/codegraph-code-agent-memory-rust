@@ -39,6 +39,10 @@ fn guidance_and_help_do_not_load_provider_configuration() {
         String::from_utf8_lossy(&output.stderr)
     );
     let instructions = String::from_utf8(output.stdout).unwrap();
+    assert!(instructions.contains("command-line interface (CLI) tool"));
+    assert!(instructions.contains("executable on PATH"));
+    assert!(instructions.contains("through your Bash/shell"));
+    assert!(instructions.contains("```bash\ncodegraph agent context"));
     for tool in ["context", "impact", "architecture", "quality"] {
         assert!(instructions.contains(&format!("codegraph agent {tool}")));
     }
