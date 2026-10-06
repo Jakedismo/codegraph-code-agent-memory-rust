@@ -8,7 +8,16 @@ provides the memory transport/storage with the providers enabled in that build.
 ## Configure and enable
 
 Use your existing CodeGraph embedding, reranking, and LLM configuration. Memory has
-no separate provider credentials. Automatic retrieval is opt-in:
+no separate provider credentials. Enable automatic retrieval in the project's `.env`
+or export these variables before starting CodeGraph:
+
+```dotenv
+CODEGRAPH_MEMORY_ENABLED=true
+CODEGRAPH_MEMORY_TOKEN_BUDGET=3000
+CODEGRAPH_MEMORY_LIMIT=10
+```
+
+The same settings are available in `.codegraph.toml` (or your explicit config file):
 
 ```toml
 [memory]
@@ -17,8 +26,17 @@ token_budget = 3000
 limit = 10
 ```
 
-`CODEGRAPH_MEMORY_ENABLED=true` overrides the project setting. Each public agent
-command accepts `--memory auto|on|off`, `--session-id`, and `--context-epoch`:
+Exported variables take precedence over project `.env`, which overrides the TOML
+settings and defaults. When no project `.env` exists, CodeGraph reads
+`~/.codegraph.env`. `CODEGRAPH_MEMORY_ENABLED` accepts `true|false|1|0|on|off`
+(case-insensitive); the token budget and limit must be positive integers. Invalid
+overrides produce a warning and retain the TOML/default value. Automatic retrieval
+defaults to disabled, 3000 tokens, and 10 memories. Direct memory commands remain
+available independently of the automatic-retrieval toggle.
+
+Each public agent command accepts `--memory auto|on|off`, `--session-id`, and
+`--context-epoch`. Explicit `--memory on` or `off` overrides `.env`/exported enablement;
+`auto` uses the resolved setting:
 
 ```sh
 codegraph agent context "Explain the scoring constraints" --memory on

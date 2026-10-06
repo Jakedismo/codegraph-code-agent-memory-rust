@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Memory environment configuration
+
+- Project `.env` and exported variables configure automatic memory enablement,
+  token budget, and recall limit through `CODEGRAPH_MEMORY_ENABLED`,
+  `CODEGRAPH_MEMORY_TOKEN_BUDGET`, and `CODEGRAPH_MEMORY_LIMIT`. Explicit agent
+  `--memory on|off` overrides enablement. Invalid overrides warn and retain
+  TOML/default settings; examples now document all three controls.
+
 ### Added - Native code-memory projection
 
 - A content-free project projection uses native relations to current code nodes and

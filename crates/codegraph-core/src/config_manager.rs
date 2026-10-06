@@ -707,8 +707,36 @@ impl ConfigManager {
 
     /// Apply environment variable overrides
     fn apply_env_overrides(mut config: CodeGraphConfig) -> CodeGraphConfig {
+        // Memory configuration
         if let Ok(value) = std::env::var("CODEGRAPH_MEMORY_ENABLED") {
-            config.memory.enabled = matches!(value.to_lowercase().as_str(), "true" | "1" | "on");
+            match value.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" | "on" => config.memory.enabled = true,
+                "false" | "0" | "off" => config.memory.enabled = false,
+                _ => warn!(
+                    "Invalid CODEGRAPH_MEMORY_ENABLED: expected true|false|1|0|on|off; keeping configured value"
+                ),
+            }
+        }
+        for (name, target) in [
+            (
+                "CODEGRAPH_MEMORY_TOKEN_BUDGET",
+                &mut config.memory.token_budget,
+            ),
+            ("CODEGRAPH_MEMORY_LIMIT", &mut config.memory.limit),
+        ] {
+            if let Ok(value) = std::env::var(name) {
+                match value
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                {
+                    Some(value) => *target = value,
+                    None => warn!(
+                        "Invalid {name}: expected a positive integer; keeping configured value"
+                    ),
+                }
+            }
         }
         // Embedding configuration
         if let Ok(provider) = std::env::var("CODEGRAPH_EMBEDDING_PROVIDER") {
@@ -1026,6 +1054,178 @@ mod tests {
 
         let config = ConfigManager::apply_env_overrides(CodeGraphConfig::default());
         assert_eq!(config.indexing.tier, IndexingTier::Balanced);
+    }
+
+    #[test]
+    fn memory_env_overrides_toml_settings() {
+        if !test_env::run(
+            concat!(module_path!(), "::memory_env_overrides_toml_settings"),
+            &[
+                ("CODEGRAPH_MEMORY_ENABLED", Some(" On ")),
+                ("CODEGRAPH_MEMORY_TOKEN_BUDGET", Some(" 12000 ")),
+                ("CODEGRAPH_MEMORY_LIMIT", Some("4")),
+            ],
+        ) {
+            return;
+        }
+        let config = toml::from_str::<CodeGraphConfig>(
+            "[memory]\nenabled = false\ntoken_budget = 3000\nlimit = 10\n",
+        )
+        .unwrap();
+        let memory = ConfigManager::apply_env_overrides(config).memory;
+        assert_eq!(
+            (memory.enabled, memory.token_budget, memory.limit),
+            (true, 12000, 4)
+        );
+    }
+
+    #[test]
+    fn memory_env_can_disable_toml_enabled_memory() {
+        if !test_env::run(
+            concat!(
+                module_path!(),
+                "::memory_env_can_disable_toml_enabled_memory"
+            ),
+            &[
+                ("CODEGRAPH_MEMORY_ENABLED", Some("OFF")),
+                ("CODEGRAPH_MEMORY_TOKEN_BUDGET", None),
+                ("CODEGRAPH_MEMORY_LIMIT", None),
+            ],
+        ) {
+            return;
+        }
+        let config = toml::from_str::<CodeGraphConfig>(
+            "[memory]\nenabled = true\ntoken_budget = 4500\nlimit = 7\n",
+        )
+        .unwrap();
+        let memory = ConfigManager::apply_env_overrides(config).memory;
+        assert_eq!(
+            (memory.enabled, memory.token_budget, memory.limit),
+            (false, 4500, 7)
+        );
+    }
+
+    #[test]
+    fn absent_memory_env_preserves_toml_and_defaults() {
+        if !test_env::run(
+            concat!(
+                module_path!(),
+                "::absent_memory_env_preserves_toml_and_defaults"
+            ),
+            &[
+                ("CODEGRAPH_MEMORY_ENABLED", None),
+                ("CODEGRAPH_MEMORY_TOKEN_BUDGET", None),
+                ("CODEGRAPH_MEMORY_LIMIT", None),
+            ],
+        ) {
+            return;
+        }
+        let defaults = ConfigManager::apply_env_overrides(CodeGraphConfig::default()).memory;
+        assert_eq!(
+            (defaults.enabled, defaults.token_budget, defaults.limit),
+            (false, 3000, 10)
+        );
+        let config = toml::from_str::<CodeGraphConfig>(
+            "[memory]\nenabled = true\ntoken_budget = 4500\nlimit = 7\n",
+        )
+        .unwrap();
+        let memory = ConfigManager::apply_env_overrides(config).memory;
+        assert_eq!(
+            (memory.enabled, memory.token_budget, memory.limit),
+            (true, 4500, 7)
+        );
+    }
+
+    #[test]
+    fn invalid_memory_env_preserves_configured_values() {
+        if !test_env::run(
+            concat!(
+                module_path!(),
+                "::invalid_memory_env_preserves_configured_values"
+            ),
+            &[
+                ("CODEGRAPH_MEMORY_ENABLED", Some("typo")),
+                ("CODEGRAPH_MEMORY_TOKEN_BUDGET", Some("0")),
+                (
+                    "CODEGRAPH_MEMORY_LIMIT",
+                    Some("99999999999999999999999999999999999"),
+                ),
+            ],
+        ) {
+            return;
+        }
+        let config = toml::from_str::<CodeGraphConfig>(
+            "[memory]\nenabled = true\ntoken_budget = 4500\nlimit = 7\n",
+        )
+        .unwrap();
+        let memory = ConfigManager::apply_env_overrides(config).memory;
+        assert_eq!(
+            (memory.enabled, memory.token_budget, memory.limit),
+            (true, 4500, 7)
+        );
+    }
+
+    #[test]
+    fn nonnumeric_and_negative_memory_env_preserve_defaults() {
+        if !test_env::run(
+            concat!(
+                module_path!(),
+                "::nonnumeric_and_negative_memory_env_preserve_defaults"
+            ),
+            &[
+                ("CODEGRAPH_MEMORY_ENABLED", Some("1")),
+                ("CODEGRAPH_MEMORY_TOKEN_BUDGET", Some("not-a-number")),
+                ("CODEGRAPH_MEMORY_LIMIT", Some("-1")),
+            ],
+        ) {
+            return;
+        }
+        let memory = ConfigManager::apply_env_overrides(CodeGraphConfig::default()).memory;
+        assert_eq!(
+            (memory.enabled, memory.token_budget, memory.limit),
+            (true, 3000, 10)
+        );
+    }
+
+    #[test]
+    fn project_dotenv_enables_memory_and_exported_values_take_precedence() {
+        if !test_env::run(
+            concat!(
+                module_path!(),
+                "::project_dotenv_enables_memory_and_exported_values_take_precedence"
+            ),
+            &[
+                ("CODEGRAPH_MEMORY_ENABLED", None),
+                ("CODEGRAPH_MEMORY_TOKEN_BUDGET", Some("12000")),
+                ("CODEGRAPH_MEMORY_LIMIT", None),
+                ("CODEGRAPH_CONFIG_PATH", None),
+                ("CODEGRAPH_EMBEDDING_PROVIDER", Some("auto")),
+                ("RUST_LOG", Some("warn")),
+            ],
+        ) {
+            return;
+        }
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join(".codegraph.toml"),
+            "[memory]\nenabled = false\ntoken_budget = 3000\nlimit = 10\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join(".env"),
+            "CODEGRAPH_MEMORY_ENABLED=true\nCODEGRAPH_MEMORY_TOKEN_BUDGET=9000\nCODEGRAPH_MEMORY_LIMIT=3\n",
+        )
+        .unwrap();
+        std::env::set_current_dir(project.path()).unwrap();
+        // SAFETY: Isolated single-test subprocess, before application workers start.
+        unsafe { ConfigManager::initialize_environment() };
+        let config = ConfigManager::load().unwrap();
+        let memory = &config.config().memory;
+        assert_eq!(
+            (memory.enabled, memory.token_budget, memory.limit),
+            (true, 12000, 3)
+        );
+        assert_eq!(config.config_path(), Some(Path::new(".codegraph.toml")));
     }
 
     #[test]

@@ -46,6 +46,8 @@ exclude_patterns = ["**/node_modules/**", "**/target/**", "**/.git/**", "**/dist
 # unless CODEGRAPH_SURREALDB_URL points at a SurrealDB server.
 [memory]
 # Automatic context in the four agent workflows is explicitly opt-in.
+# CODEGRAPH_MEMORY_ENABLED, CODEGRAPH_MEMORY_TOKEN_BUDGET, and CODEGRAPH_MEMORY_LIMIT
+# in .env or the process environment override these settings.
 enabled = false
 token_budget = 3000
 limit = 10

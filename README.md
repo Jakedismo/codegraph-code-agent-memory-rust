@@ -458,7 +458,16 @@ ANTHROPIC_API_KEY="<your-api-key>"
 
 Replace placeholders with your settings. Set the model and its actual context window explicitly for reproducible behavior. Environment variables take precedence over configuration-file LLM settings. API keys are read from the environment.
 
-Memory reuses these providers and the configured LLM for bounded background processing. Enable automatic retrieval in your TOML configuration:
+Memory reuses these providers and the configured LLM for bounded background processing.
+Enable and configure automatic retrieval in your project `.env`:
+
+```dotenv
+CODEGRAPH_MEMORY_ENABLED=true
+CODEGRAPH_MEMORY_TOKEN_BUDGET=3000
+CODEGRAPH_MEMORY_LIMIT=10
+```
+
+Alternatively, use the `[memory]` section in `.codegraph.toml` or your selected TOML configuration:
 
 ```toml
 [memory]
@@ -467,7 +476,10 @@ token_budget = 3000
 limit = 10
 ```
 
-Direct memory commands work independently of this automatic-retrieval setting. User-store embedding settings are pinned independently of project vectors.
+Exported variables override `.env`, which overrides TOML. Explicit agent
+`--memory on|off` flags override the enablement setting. Budget and limit values
+must be positive integers. Direct memory commands work independently of automatic
+retrieval. User-store embedding settings are pinned independently of project vectors.
 
 See [.env.example](.env.example) and [AI provider configuration](docs/AI_PROVIDERS.md).
 

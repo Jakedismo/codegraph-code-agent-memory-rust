@@ -40,11 +40,17 @@ mod enabled {
             .env("CODEGRAPH_RERANK_PROVIDER", "none")
             .env("CODEGRAPH_MEMORY_ENABLED", "false")
             .env("CODEGRAPH_USE_GRAPH_SCHEMA", "false")
+            .env_remove("CODEGRAPH_MEMORY_TOKEN_BUDGET")
+            .env_remove("CODEGRAPH_MEMORY_LIMIT")
             .env_remove("CODEGRAPH_SURREALDB_URL")
             .env_remove("CODEGRAPH_PROJECT_ID")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if args.first() == Some(&"agent") {
+            // Agent fixtures select enablement through their own .env or explicit CLI flag.
+            command.env_remove("CODEGRAPH_MEMORY_ENABLED");
+        }
         let mut child = command.spawn().unwrap();
         if let Some(input) = input {
             child
@@ -101,10 +107,14 @@ mod enabled {
                 let content = if classify {
                     json!([{"statement":"Keep scalar scoring stable","kind":"decision","relationships":[],"evidence_indices":[]}]).to_string()
                 } else {
-                    let context: Value = messages.iter().filter_map(|message| message["content"].as_str()).find_map(|text|
-                        text.split_once("reference:\n").and_then(|(_, json)| serde_json::from_str(json).ok())).expect("memory supplied before reasoning");
-                    assert_eq!(context["memories"][0]["memory"]["statement"], "Keep scalar scoring stable");
-                    format!("Remembered scoring decision [{}]",context["retrieved_memory_refs"][0].as_str().unwrap())
+                    let context: Option<Value> = messages.iter().filter_map(|message| message["content"].as_str()).find_map(|text|
+                        text.split_once("reference:\n").and_then(|(_, json)| serde_json::from_str(json).ok()));
+                    if let Some(context) = context {
+                        assert_eq!(context["memories"][0]["memory"]["statement"], "Keep scalar scoring stable");
+                        format!("Remembered scoring decision [{}]",context["retrieved_memory_refs"][0].as_str().unwrap())
+                    } else {
+                        "Memory explicitly disabled for this workflow".into()
+                    }
                 };
                 Json(json!({"model":"mock-memory-llm","created_at":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":content},"done":true}))
             }));
@@ -198,6 +208,50 @@ mod enabled {
                     result["memory_context"]["retrieved_memory_refs"]
                 );
             }
+            // Automatic mode must load all three memory settings from the project .env.
+            std::fs::write(root.join(".env"), "CODEGRAPH_MEMORY_ENABLED=true\nCODEGRAPH_MEMORY_TOKEN_BUDGET=6000\nCODEGRAPH_MEMORY_LIMIT=3\n").unwrap();
+            let automatic = value(invoke(
+                &root,
+                &home,
+                &url,
+                &[
+                    "agent",
+                    "context",
+                    "Explain scoring",
+                    "--timeout-secs",
+                    "20",
+                ],
+                None,
+            ));
+            assert_eq!(
+                automatic["memory_context"]["memories"][0]["memory"]["statement"],
+                "Keep scalar scoring stable"
+            );
+            assert_eq!(automatic["memory_context"]["token_budget"], 6000);
+            assert_eq!(automatic["memory_context"]["limit"], 3);
+            let disabled = value(invoke(
+                &root,
+                &home,
+                &url,
+                &[
+                    "agent",
+                    "context",
+                    "Explain scoring",
+                    "--memory",
+                    "off",
+                    "--timeout-secs",
+                    "20",
+                ],
+                None,
+            ));
+            assert_eq!(disabled["memory_context"]["status"], "disabled");
+            assert!(
+                disabled["memory_context"]["retrieved_memory_refs"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            std::fs::write(root.join(".env"), "").unwrap();
             value(invoke(
                 &root,
                 &home,
