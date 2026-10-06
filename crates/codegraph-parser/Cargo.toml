@@ -1,0 +1,62 @@
+[package]
+name = "codegraph-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Source code parsing using tree-sitter for CodeGraph"
+
+[dependencies]
+codegraph-core = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-javascript = { workspace = true }
+tree-sitter-go = { workspace = true }
+tree-sitter-java = { workspace = true }
+tree-sitter-cpp = { workspace = true }
+
+# Revolutionary universal language support
+tree-sitter-swift = { workspace = true }
+tree-sitter-c-sharp = { workspace = true }
+tree-sitter-ruby = { workspace = true }
+tree-sitter-php = { workspace = true }
+# Disabled: tree-sitter-kotlin and tree-sitter-dart pull in incompatible tree-sitter v0.20.10
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+notify = { workspace = true }
+similar = { workspace = true }
+sha2 = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+uuid = { workspace = true }
+num_cpus = { workspace = true }
+globset = { workspace = true }
+ignore = { workspace = true }
+
+# Fast ML for code analysis
+aho-corasick = "1.1.5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-uring = { workspace = true, optional = true }
+
+[features]
+default = []
+experimental = ["watcher-experimental"]
+watcher-experimental = []
+# Enable Linux-specific io_uring accelerated file reads.
+# This requires a Linux kernel with io_uring support. Falls back automatically otherwise.
+io-uring = ["tokio-uring"]
+
+[dev-dependencies]
+tempfile = { workspace = true }

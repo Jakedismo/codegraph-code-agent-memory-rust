@@ -1,0 +1,23 @@
+[package]
+name = "codegraph-concurrent"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+uuid = { workspace = true }
+crossbeam-utils = { workspace = true }
+crossbeam-queue = { workspace = true }
+crossbeam-skiplist = { workspace = true }
+arc-swap = { workspace = true }
+
+codegraph-core = { path = "../codegraph-core" }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+loom = "0.7.2"
+
+[features]
+loom = []

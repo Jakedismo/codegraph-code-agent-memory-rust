@@ -1,0 +1,75 @@
+[package]
+name = "codegraph-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core types and traits for the CodeGraph system"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9.34"
+toml = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+dotenv = "0.15.0"
+dirs = "7.0.0"
+tokio = { workspace = true }
+futures = { workspace = true }
+num_cpus = { workspace = true }
+schemars = { workspace = true }
+notify = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+dashmap = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+indicatif = { workspace = true }
+once_cell = { workspace = true }
+tikv-jemallocator = { workspace = true }
+hashbrown = { workspace = true }
+rustc-hash = { workspace = true }
+sha2 = { workspace = true }
+blake3 = "1.8.7"
+bincode = { workspace = true }
+zstd = "0.14.0"
+
+memmap2 = { workspace = true }
+
+# Zero-copy and serialization support
+bytes = { workspace = true }
+
+# Optional arena allocator and zero-copy archiving
+bumpalo = "3.20.3"
+rkyv = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.190"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory"
+] }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "core_micro"
+harness = false
+
+[features]
+# Enable jemalloc as the global allocator and expose jemalloc controls
+default = ["jemalloc"]
+jemalloc = []

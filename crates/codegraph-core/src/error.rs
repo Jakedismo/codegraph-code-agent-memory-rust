@@ -1,0 +1,78 @@
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CodeGraphError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
+
+    #[error("Graph error: {0}")]
+    Graph(String),
+
+    #[error("Vector error: {0}")]
+    Vector(String),
+
+    #[error("Database error: {0}")]
+    Database(String),
+
+    #[error("Node not found: {0}")]
+    NodeNotFound(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+
+    #[error("Transaction error: {0}")]
+    Transaction(String),
+
+    #[error("Version error: {0}")]
+    Version(String),
+
+    #[error("Conflict error: {0}")]
+    Conflict(String),
+
+    #[error("Recovery error: {0}")]
+    Recovery(String),
+
+    #[error("Configuration error: {0}")]
+    Configuration(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Training error: {0}")]
+    Training(String),
+
+    #[error("External error: {0}")]
+    External(String),
+
+    #[error("Network error: {0}")]
+    Network(String),
+
+    #[error("Timeout error: {0}")]
+    Timeout(String),
+
+    #[error("Threading error: {0}")]
+    Threading(String),
+
+    #[error("Concurrency error: {0}")]
+    Concurrency(String),
+
+    #[error("Compression error: {0}")]
+    Compression(String),
+
+    #[error("Memory pool error: {0}")]
+    MemoryPool(String),
+
+    #[error("Notify error: {0}")]
+    Notify(#[from] notify::Error),
+}
+
+pub type Result<T> = std::result::Result<T, CodeGraphError>;

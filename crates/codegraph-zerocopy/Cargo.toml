@@ -1,0 +1,34 @@
+[package]
+name = "codegraph-zerocopy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Zero-copy data structures and serialization for CodeGraph"
+
+[dependencies]
+# Core dependencies
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Zero-copy serialization
+rkyv = { workspace = true }
+bytecheck = { workspace = true, optional = true }
+
+# Memory management
+memmap2 = { workspace = true }
+bytes = { workspace = true }
+arc-swap = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }
+crossbeam-queue = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[features]
+default = ["validation"]
+validation = ["dep:bytecheck"]
+unsafe_fast = []

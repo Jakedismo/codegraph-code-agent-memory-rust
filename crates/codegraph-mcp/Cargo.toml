@@ -1,0 +1,92 @@
+[package]
+name = "codegraph-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Model Context Protocol implementation for CodeGraph"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9.34"
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = "0.2.5"
+uuid = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+fastrand = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+toml = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+lru = { workspace = true }
+atty = { workspace = true }
+rustc-demangle = "0.1.28"
+symbolic-demangle = "13.9.0"
+syn = { version = "3.0.6", features = ["parsing"] }
+
+# CLI dependencies
+clap = { workspace = true }
+colored = { workspace = true }
+indicatif = { workspace = true }
+dirs = "7.0.0"
+dotenv = "0.15.0"
+nix = { version = "0.31.3", features = ["fs", "process", "signal"] }
+notify = "8.2.0"
+walkdir = "2.5.0"
+regex = { workspace = true }
+rapidfuzz = "0.5.0"
+tree-sitter = { workspace = true }
+scip = "0.10.0"
+protobuf = "3.7.2"
+rayon = { workspace = true }
+num_cpus = { workspace = true }
+
+# Pattern matching for daemon mode
+glob-match = "0.2.1"
+
+# Internal dependencies
+codegraph-core = { workspace = true }
+codegraph-parser = { workspace = true }
+codegraph-graph = { workspace = true, features = ["surrealdb"] }
+codegraph-vector = { workspace = true, optional = true, default-features = false }
+tokenizers = { workspace = true }  # Qwen2.5-Coder tokenizer for accurate token counting
+# codegraph-api not used directly here; avoid pulling heavy deps
+## core-rag-mcp-server intentionally not linked to keep binary lean
+
+codegraph-mcp-core = { path = "../codegraph-mcp-core" }
+codegraph-mcp-tools = { path = "../codegraph-mcp-tools", optional = true }
+unicode-bom = "2.0.3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+anyhow = { workspace = true }
+serial_test = "4.0.1"
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+codegraph-vector = { workspace = true, features = ["ollama"] }
+surrealdb = { version = "3.3.0", features = ["kv-mem"] }
+
+[features]
+default = []
+daemon = ["codegraph-parser/watcher-experimental"]
+embeddings = ["dep:codegraph-vector", "dep:codegraph-mcp-tools"]
+embeddings-local = ["embeddings", "codegraph-vector/local-embeddings"]
+embeddings-openai = ["embeddings", "codegraph-vector/openai"]
+embeddings-ollama = ["embeddings", "codegraph-vector/ollama"]
+embeddings-jina = ["embeddings", "codegraph-vector/jina"]
+embeddings-lmstudio = ["embeddings", "codegraph-vector/lmstudio"]
+cloud = ["embeddings-jina", "codegraph-graph/surrealdb"]
+server-http = []
+ai-enhanced = ["embeddings"]

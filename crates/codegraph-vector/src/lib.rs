@@ -1,0 +1,96 @@
+pub mod embedding;
+pub mod embeddings;
+pub mod error;
+pub mod input_policy;
+pub mod providers;
+pub mod search;
+mod submitted_cache;
+
+pub mod cache;
+pub mod gpu;
+pub mod memory;
+pub mod optimization;
+pub mod prep;
+pub mod simd_ops;
+
+#[cfg(feature = "openai")]
+pub mod openai_provider;
+
+#[cfg(feature = "local-embeddings")]
+pub mod local_provider;
+
+#[cfg(feature = "onnx")]
+pub mod onnx_provider;
+
+#[cfg(feature = "ollama")]
+pub mod ollama_embedding_provider;
+
+#[cfg(feature = "jina")]
+pub mod jina_provider;
+
+#[cfg(feature = "lmstudio")]
+pub mod lmstudio_embedding_provider;
+
+pub mod surreal_store;
+
+#[cfg(feature = "persistent")]
+pub mod consistency;
+#[cfg(feature = "persistent")]
+pub mod incremental;
+#[cfg(feature = "persistent")]
+pub mod persistent;
+
+pub mod insights_generator;
+pub mod ml;
+pub mod rag;
+pub mod reranker; // NEW: Fast reranking pipeline for insights generation // NEW: High-performance insights with reranking
+pub mod reranking; // NEW: Text-based reranking for RAG (Jina API, Ollama chat)
+
+pub use embedding::*;
+pub use embeddings::generator::AdvancedEmbeddingGenerator;
+pub use providers::*;
+pub use search::*;
+
+pub use cache::*;
+pub use gpu::*;
+pub use memory::*;
+pub use optimization::*;
+
+#[cfg(feature = "openai")]
+pub use openai_provider::*;
+
+#[cfg(feature = "local-embeddings")]
+pub use local_provider::*;
+
+#[cfg(feature = "onnx")]
+pub use onnx_provider::*;
+
+#[cfg(feature = "ollama")]
+pub use ollama_embedding_provider::*;
+
+#[cfg(feature = "jina")]
+pub use jina_provider::{
+    JinaConfig, JinaEmbeddingProvider, MAX_NODE_TEXTS_HARD_LIMIT, MAX_REL_TEXTS_HARD_LIMIT,
+};
+
+#[cfg(feature = "lmstudio")]
+pub use lmstudio_embedding_provider::*;
+
+pub use surreal_store::*;
+
+#[cfg(feature = "persistent")]
+pub use consistency::*;
+#[cfg(feature = "persistent")]
+pub use incremental::*;
+#[cfg(feature = "persistent")]
+#[allow(ambiguous_glob_reexports)]
+pub use persistent::*;
+
+pub use insights_generator::*;
+pub use rag::*;
+pub use reranker::*; // Re-export reranker types // Re-export insights types
+pub use reranking::*; // Re-export text-based reranking types
+
+// Re-export common types for convenience
+pub use codegraph_core::{CodeGraphError, NodeId, Result};
+pub use error::VectorError;

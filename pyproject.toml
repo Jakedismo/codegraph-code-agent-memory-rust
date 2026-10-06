@@ -1,0 +1,23 @@
+# pyproject.toml - Dependency management for CodeGraph test scripts
+# This is NOT a package - just dependency declarations for uv/pip
+#
+# Usage:
+#   uv sync              # Install dependencies with uv
+#   uv run python3 test_agentic_tools.py
+#
+# Or traditional pip:
+#   pip install -r requirements-test.txt
+
+[project]
+name = "codegraph-tests"
+version = "1.0.0"
+description = "Test utilities for CodeGraph MCP server"
+requires-python = ">=3.8"
+dependencies = [
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",  # Linting and formatting
+]
