@@ -120,31 +120,73 @@ responses. It expires with exit 1, without claiming a complete answer.
 
 ## Testing the CLI
 
-After indexing finishes, run the same eight questions as `test_http_mcp.py` through
-the CLI:
+After installing the memory-enabled `full` build and indexing, run the memory
+contract suite followed by the same eight questions as `test_http_mcp.py`:
 
 ```sh
 python3 test_cli_agentic.py
 python3 test_cli_agentic.py --binary /path/to/codegraph --project /path/to/indexed/project
+# Test memory operations without agent questions or code-linked seeds:
+python3 test_cli_agentic.py --memory-only
 # Run only the three context questions, or one numbered question:
 python3 test_cli_agentic.py --tool context
 python3 test_cli_agentic.py --case 5 --timeout-secs 600
 # Review already saved answers without rerunning queries (latest run):
 python3 test_cli_agentic.py --replay test_output_cli
 python3 test_cli_agentic.py --replay test_output_cli --case 5
+python3 test_cli_agentic.py --replay test_output_cli --memory-only
 # Inspect cases and commands without contacting providers:
 python3 test_cli_agentic.py --list
 python3 test_cli_agentic.py --dry-run
 ```
 
-The runner needs only Python 3.8+ and an existing agent-enabled binary (`full` or
-`ai-enhanced`). It defaults to `codegraph` on PATH; `CODEGRAPH_BIN` or `--binary`
-selects another executable. `--project-id` and `--config` match the CLI's overrides.
+The runner needs only Python 3.8+ and an existing binary built with `full`, including
+memory, embedding providers, and the agent backend. It defaults to `codegraph` on
+PATH; `CODEGRAPH_BIN` or `--binary` selects another executable. `--project-id` and
+`--config` match the CLI's overrides.
 Each CLI process loads the selected project's environment; the Python script does
 not load this repository's `.env` or start an MCP server. Use your existing model
 configuration; agent queries can incur provider costs. The embedded database accepts
 one process at a time, so finish indexing and stop an MCP server holding that store
-before running the tests. Cases run sequentially.
+before running the tests. Cases run sequentially. A vanilla binary or failed memory
+prerequisite blocks agent execution; the harness does not install or rebuild it.
+
+The default run has three stages:
+
+1. Test all four public memory operations before any agent question. Checks cover
+   completed semantic writes, paraphrased unanchored recall, idempotency, semantic
+   selection without mutation, corrections and stale revision rejection, explicit
+   evidence confirmation, idempotent feedback, full forgetting and replay protection,
+   asynchronous session writes, session isolation/completion/archive recall, user/project
+   scope filtering, and persistence across a memory-owner restart. Status/wait and
+   rejection of retries on completed jobs are also exercised.
+2. Seed relevant investigation notes for every selected question, with current source
+   file SHA256 evidence. Wait for classification and check direct semantic recall,
+   code anchors, nodes, hop paths, and current-source snippets before starting agents.
+   The first selected seed is corrected so its automatic result must appear in
+   `needs_verification`. These source-linked seeds target the CodeGraph repository;
+   they fail clearly if their source paths or symbols are missing.
+3. Run agent questions with `--memory on` and validate `memory_context` against the
+   seed's exact ID/revision. Missing seeds, stale references, absent graph context,
+   invalid citations, and partial memory retrieval fail the case. Citation counts
+   are reported separately: retrieval does not guarantee that the model cites a memory.
+
+Each run uses a private `CODEGRAPH_MEMORY_HOME` and session identity under its results
+directory. The user store and owner are private to that run; project claims still live
+in the repository's durable memory database. Only IDs created by this run are cleaned
+up, using their current revisions, and only the private owner is stopped. Existing
+memories are not selected for deletion. Close any other memory owner holding that
+project store before running; the harness never stops the global owner or runs
+re-embedding/schema-application commands. Opening a store uses the normal automatic
+memory schema initialization/migration. Cleanup failures fail the run and leave exact
+operation IDs in `memory_manifest.json` for investigation.
+
+`--memory-timeout-secs` sets each memory operation/wait deadline (default 180 seconds).
+`--memory-token-budget` controls direct probes (default 20000). Automatic agent recall
+uses the project's `[memory]` limit and token budget; increase that configured budget
+if code-linked records cannot fit. `--skip-memory` explicitly restores the original
+agent-only run for comparisons with a vanilla binary. It cannot be combined with
+`--memory-only`.
 
 Questions, focuses and 600-second deadlines are shared in `agentic_test_cases.py`
 so HTTP and CLI inputs stay identical. `--tool` and `--case` can be repeated;
@@ -154,21 +196,28 @@ a stalled command.
 The HTTP test's SSE read budget allows the full case deadline plus five seconds;
 the case's own deadline still bounds how long it waits for the agent's answer.
 
-Full agent answers and structured evidence are printed after each case completes,
+Full memory responses, agent answers, structured evidence, and the returned memory
+context with references and graph paths are printed after each case completes,
 so you can judge their reasoning and source references directly in the terminal.
 JSON answers are pretty-printed; `--summary-only` keeps terminal output compact
 without removing saved responses. `--replay PATH` displays a saved case JSON, all
 cases in a run directory, or the latest run under a results directory. It also
 works before a running suite writes its final summary and supports `--tool`/`--case`
-filters. Replay launches no commands, writes no files, and displays saved failures
+filters for agent cases. Memory command records are replayed first, including cleanup;
+`--memory-only` replays only those records and `--skip-memory` replays only agent cases.
+Replay launches no commands, writes no files, and displays saved failures
 with their original status; successful inspection exits 0.
 
 Each timestamped run under ignored `test_output_cli/` contains per-case JSON and
 readable logs with the complete response, stdout/stderr, command, status, timing,
-step/tool counts, warnings and unique structured file locations. `summary.json`
+step/tool counts, warnings and unique structured file locations. `memory_*.json` and
+logs retain each memory command's request, response, and assertion result;
+`memory_manifest.json` records operations, seeds and cleanup identities. `summary.json`
 collects the results; `--output-dir` changes the parent directory. Nonzero CLI exits,
-error payloads, invalid/empty JSON answers, timeouts and reported partial results
-make the runner exit 1; it still runs later cases. Invalid arguments or a missing
+error payloads, invalid/empty JSON answers, timeouts, failed memory checks/cleanup,
+and reported partial results make the runner exit 1. Agent case failures do not
+prevent later cases; failed memory prerequisites prevent all dependent agent cases.
+Invalid arguments or a missing
 binary/config file exit 2; writing failures exit 1.
 `OK` means a valid answer was returned, not that its factual accuracy was scored.
 Source counts can vary with extraction tier, model and available index evidence;

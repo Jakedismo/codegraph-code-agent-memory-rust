@@ -77,6 +77,7 @@ class CliRunnerTests(unittest.TestCase):
                 str(self.project),
                 "--output-dir",
                 str(self.output),
+                "--skip-memory",  # This class preserves the original transport-only contracts.
                 *extra,
             ],
             cwd=self.directory,

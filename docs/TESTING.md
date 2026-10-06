@@ -3,9 +3,14 @@
 This guide explains how to test the CodeGraph MCP server after indexing your project.
 
 For the CLI equivalent of `test_http_mcp.py`, run `python3 test_cli_agentic.py`
-after indexing finishes. It uses the same eight questions/focuses, needs only the
-Python standard library, and saves complete responses plus a summary under
-`test_output_cli/`. Use `--tool context` or `--case 1` for a focused run. See
+after installing the memory-enabled `full` build and indexing. It first tests all
+four memory operations, then seeds source-linked investigation notes and validates
+their exact references and graph context in the same eight agent questions/focuses.
+It needs only the Python standard library and saves complete memory/agent responses,
+cleanup identities, and a summary under `test_output_cli/`. Use `--memory-only` to
+exercise memory first, or `--tool context` / `--case 1` for a focused seeded run.
+`--dry-run` contacts no providers; `--skip-memory` supports explicit vanilla comparisons.
+See
 [CLI test options and prerequisites](AGENTIC_CLI.md#testing-the-cli).
 
 ## Prerequisites

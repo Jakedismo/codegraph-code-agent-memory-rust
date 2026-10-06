@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# ABOUTME: Runs the HTTP smoke-test questions through CodeGraph's four public CLI tools.
-# ABOUTME: Saves complete responses, diagnostics and timings without starting an MCP server.
-"""Exercise the indexed project's agent CLI using the same cases as test_http_mcp.py."""
+# ABOUTME: Tests semantic memory first, then runs seeded questions through the four public CLI tools.
+# ABOUTME: Saves complete memory/agent responses, diagnostics and timings without starting an MCP server.
+"""Test memory CRUD and automatic recall, then the shared HTTP/CLI agent questions."""
 
 import argparse
 import json
@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agentic_test_cases import AGENTIC_TESTS, DEFAULT_AGENT_TIMEOUT_SECS
+from cli_memory_tests import MemoryFailure, MemoryHarness, memory_check, preview
 
 TOOLS = ("context", "impact", "architecture", "quality")
 PROCESS_GRACE_SECONDS = 5
@@ -59,6 +60,28 @@ def argument_parser():
         "--timeout-secs",
         type=positive_integer,
         help=f"Override each case's {DEFAULT_AGENT_TIMEOUT_SECS}s deadline",
+    )
+    parser.add_argument(
+        "--memory-timeout-secs",
+        type=positive_integer,
+        default=180,
+        help="Deadline for each memory command, including background wait (default: 180)",
+    )
+    parser.add_argument(
+        "--memory-token-budget",
+        type=positive_integer,
+        default=20000,
+        help="Budget for explicit memory probes; agent recall uses its configured budget",
+    )
+    parser.add_argument(
+        "--memory-only",
+        action="store_true",
+        help="Run the memory contract suite without seeding or running agent questions",
+    )
+    parser.add_argument(
+        "--skip-memory",
+        action="store_true",
+        help="Explicit legacy comparison: run original agent cases without memory tests/seeds",
     )
     parser.add_argument(
         "--verbose", action="store_true", help="Capture verbose CLI diagnostics"
@@ -109,6 +132,8 @@ def command_for(args, case, binary):
         command.extend(["--project-id", args.project_id])
     if focus is not None:
         command.extend(["--focus", focus])
+    if not args.skip_memory:
+        command.extend(["--memory", "on"])
     return command
 
 
@@ -169,7 +194,7 @@ def captured_text(value):
     )
 
 
-def run_case(args, number, case, binary):
+def run_case(args, number, case, binary, memory=None):
     tool, query, focus, timeout = case
     timeout = args.timeout_secs or timeout
     command = command_for(args, case, binary)
@@ -203,6 +228,7 @@ def run_case(args, number, case, binary):
             errors="replace",
             timeout=timeout + PROCESS_GRACE_SECONDS,
             check=False,
+            env=memory.env if memory else None,
         )
         result.update(
             returncode=process.returncode, stdout=process.stdout, stderr=process.stderr
@@ -250,6 +276,19 @@ def run_case(args, number, case, binary):
                 steps_taken=response.get("steps_taken"),
                 tool_use_count=response.get("tool_use_count"),
             )
+            if memory:
+                seed = memory.seeds[number]
+                check = memory_check(
+                    response.get("memory_context"),
+                    seed["expected_refs"],
+                    require_grounding=True,
+                    require_review=seed["require_review"],
+                )
+                result["memory_check"] = check
+                if check["status"] != "OK":
+                    result.update(
+                        status="MEMORY_FAILED", error="; ".join(check["errors"])
+                    )
     except subprocess.TimeoutExpired as error:
         result.update(
             status="TIMEOUT",
@@ -296,6 +335,8 @@ def save_case(directory, result):
         json.dumps(result["warnings"], indent=2, ensure_ascii=False),
         "FILE LOCATIONS EXTRACTED:",
         json.dumps(result["file_locations"], indent=2, ensure_ascii=False),
+        "MEMORY CHECK:",
+        json.dumps(result.get("memory_check"), indent=2, ensure_ascii=False),
     ]
     (directory / result["log_file"]).write_text(
         "\n".join(lines) + "\n", encoding="utf-8"
@@ -326,6 +367,12 @@ def print_response(result):
     if isinstance(structured, (dict, list)) and structured and structured != parsed:
         print("\nSTRUCTURED OUTPUT / EVIDENCE:", flush=True)
         print(json.dumps(structured, indent=2, ensure_ascii=False), flush=True)
+    if isinstance(response.get("memory_context"), dict):
+        print("\nMEMORY CONTEXT / REFERENCES / GRAPH HOPS:", flush=True)
+        print(
+            json.dumps(response["memory_context"], indent=2, ensure_ascii=False),
+            flush=True,
+        )
 
 
 def print_result(result, summary_only=False):
@@ -337,6 +384,13 @@ def print_result(result, summary_only=False):
         print(result["error"], flush=True)
     for warning in result["warnings"]:
         print(f"Warning: {warning}", flush=True)
+    if result.get("memory_check"):
+        check = result["memory_check"]
+        print(
+            f"Memory: {check['status']} | matched {len(check.get('matched', []))} seed revisions "
+            f"| cited {len(check.get('cited_refs', []))}",
+            flush=True,
+        )
     if not summary_only:
         print_response(result)
 
@@ -344,26 +398,57 @@ def print_result(result, summary_only=False):
 def replay(args, parser):
     """Read already saved results without starting binaries or loading project configuration."""
     source = args.replay.expanduser().resolve()
-    pattern = "[0-9][0-9]_agentic_*.json"
+    patterns = (
+        ["memory_[0-9][0-9][0-9]_*.json"]
+        if args.memory_only
+        else (
+            ["[0-9][0-9]_agentic_*.json"]
+            if args.skip_memory
+            else ["memory_[0-9][0-9][0-9]_*.json", "[0-9][0-9]_agentic_*.json"]
+        )
+    )
+
+    def saved_paths(directory):
+        return [
+            path for pattern in patterns for path in sorted(directory.glob(pattern))
+        ]
+
     if source.is_file() and source.name != "summary.json":
         paths = [source]
     else:
         directory = source.parent if source.is_file() else source
-        paths = sorted(directory.glob(pattern))
+        paths = saved_paths(directory)
         if not paths:
             runs = sorted(
                 child
                 for child in directory.glob("*")
-                if child.is_dir() and any(child.glob(pattern))
+                if child.is_dir() and saved_paths(child)
             )
             if runs:
-                paths = sorted(runs[-1].glob(pattern))
+                paths = saved_paths(runs[-1])
         if not paths:
             parser.error(f"No saved CLI case results found under {source}")
     matched = 0
     for path in paths:
         try:
             result = json.loads(path.read_text(encoding="utf-8"))
+            if path.name.startswith("memory_"):
+                if not isinstance(result, dict) or any(
+                    key not in result
+                    for key in ("test", "status", "duration", "command", "error")
+                ):
+                    parser.error(f"Not a saved memory result: {path}")
+                print(
+                    f"\nMemory {result['test']}: {result['status']} ({result['duration']:.1f}s)\nSaved result: {path}"
+                )
+                if result["error"]:
+                    print(result["error"])
+                if not args.summary_only:
+                    print(
+                        json.dumps(result.get("response"), indent=2, ensure_ascii=False)
+                    )
+                matched += 1
+                continue
             required = (
                 "case",
                 "test",
@@ -400,6 +485,8 @@ def replay(args, parser):
 def main(argv=None):
     parser = argument_parser()
     args = parser.parse_args(argv)
+    if args.skip_memory and args.memory_only:
+        parser.error("--skip-memory cannot be combined with --memory-only")
     if args.replay:
         if args.list or args.dry_run:
             parser.error("--replay cannot be combined with --list or --dry-run")
@@ -420,6 +507,12 @@ def main(argv=None):
     if not cases:
         parser.error("No cases match the selected --tool and --case filters")
     if args.list or args.dry_run:
+        if not args.skip_memory:
+            preview(
+                args, [] if args.memory_only else cases, os.path.expanduser(args.binary)
+            )
+        if args.memory_only:
+            return 0
         for number, case in cases:
             print(
                 f"{number:02}: {case[0]} (focus={case[2] or 'default'}, timeout={args.timeout_secs or case[3]}s)"
@@ -447,21 +540,62 @@ def main(argv=None):
         print(f"CodeGraph CLI Agentic Tools Test | Project: {args.project}", flush=True)
         print(f"Binary: {binary}\nResults: {directory}", flush=True)
         results = []
-        for number, case in cases:
-            print(
-                f"\n[{number:02}] {case[0]} | Focus: {case[2] or 'default'}\n{case[1]}",
-                flush=True,
-            )
-            result = run_case(args, number, case, binary)
-            save_case(directory, result)
-            results.append(
-                {
-                    key: value
-                    for key, value in result.items()
-                    if key not in ("response", "stdout", "stderr")
-                }
-            )
-            print_result(result, args.summary_only)
+        memory = None if args.skip_memory else MemoryHarness(args, binary, directory)
+        memory_error = None
+        try:
+            try:
+                if memory:
+                    print("\nFIRST: semantic memory contract tests", flush=True)
+                    memory.suite()
+                    if not args.memory_only:
+                        print(
+                            "\nTHEN: relevant memory seeds and direct recall probes",
+                            flush=True,
+                        )
+                        memory.seed(cases)
+            except MemoryFailure as error:
+                memory_error = str(error)
+                memory.fail_last(error)
+                print(
+                    f"Memory prerequisites failed: {error}\nAgent cases will not run. "
+                    "This suite needs a memory-enabled full build, configured embedding/LLM "
+                    "providers, and a ready code index.",
+                    flush=True,
+                )
+            for number, case in [] if memory_error or args.memory_only else cases:
+                print(
+                    f"\n[{number:02}] {case[0]} | Focus: {case[2] or 'default'}\n{case[1]}",
+                    flush=True,
+                )
+                result = run_case(args, number, case, binary, memory)
+                save_case(directory, result)
+                results.append(
+                    {
+                        key: value
+                        for key, value in result.items()
+                        if key not in ("response", "stdout", "stderr")
+                    }
+                )
+                print_result(result, args.summary_only)
+        finally:
+            if memory:
+                try:
+                    memory.cleanup()
+                except (MemoryFailure, OSError) as error:
+                    memory_error = "; ".join(filter(None, (memory_error, str(error))))
+                finally:
+                    try:
+                        # This is the private run owner, never the user's global service.
+                        status = memory.call(
+                            "final_service_status", "service", "status"
+                        )
+                        if status.get("status") == "running":
+                            memory.call("final_owner_stop", "service", "stop")
+                            memory.wait_stopped()
+                    except (MemoryFailure, OSError) as error:
+                        memory_error = "; ".join(
+                            filter(None, (memory_error, str(error)))
+                        )
         counts = dict(Counter(result["status"] for result in results))
         report = {
             "transport": "CLI",
@@ -472,8 +606,20 @@ def main(argv=None):
             "config_override": str(args.config) if args.config else None,
             "results": results,
             "counts": counts,
-            "total_duration": sum(result["duration"] for result in results),
+            "total_duration": sum(result["duration"] for result in results)
+            + (sum(result["duration"] for result in memory.results) if memory else 0),
             "total_file_locations": sum(result["files"] for result in results),
+            "memory": None
+            if memory is None
+            else {
+                "memory_home": str(memory.home),
+                "session_id": memory.session,
+                "results": memory.results,
+                "seeds": memory.seeds,
+                "error": memory_error,
+                "counts": dict(Counter(result["status"] for result in memory.results)),
+                "total_duration": sum(result["duration"] for result in memory.results),
+            },
         }
         (directory / "summary.json").write_text(
             json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -482,7 +628,17 @@ def main(argv=None):
             f"\nSummary: {counts} | {report['total_duration']:.1f}s | {report['total_file_locations']} file locations"
         )
         print(f"Report: {directory / 'summary.json'}")
-        return 0 if all(result["status"] == "OK" for result in results) else 1
+        if memory:
+            print(
+                f"Memory summary: {report['memory']['counts']} | {report['memory']['total_duration']:.1f}s"
+            )
+            if memory_error:
+                print(f"Memory failure: {memory_error}")
+        return (
+            0
+            if not memory_error and all(result["status"] == "OK" for result in results)
+            else 1
+        )
     except OSError as error:
         print(f"Cannot write test results: {error}", file=sys.stderr)
         return 1
