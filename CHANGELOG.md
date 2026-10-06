@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider error redaction and provisional semantic recall.
 - CLI test cleanup deletes tracked provisional claims after failed classification,
   without counting the stored operation failure again as a cleanup command failure.
+- Operation-specific semantic recall filters candidates before ranking and ignores
+  unrelated pending observations. Review context compacts against its reserved
+  capacity, retaining current-source snippets without displacing ordinary recall.
+- Classification extracts assertions from the submitted statement; supporting code
+  evidence is not a source of additional unsolicited memory claims.
+- Explicit symbols resolve through bounded project/file-scoped native queries
+  alongside semantic anchoring. Ambiguous definitions are not selected, and missing
+  code grounding appears under `needs_verification` without hiding non-code memory.
 
 ### Changed - Memory environment configuration
 

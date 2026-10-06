@@ -81,7 +81,7 @@ mod enabled {
         let graph = codegraph_graph::SurrealDbStorage::new(config)
             .await
             .unwrap();
-        graph.db().query("CREATE nodes:memory_root CONTENT {project_id:$project,name:'score',node_type:'function',file_path:'src/lib.rs',start_line:1,end_line:1}; CREATE nodes:memory_neighbor CONTENT {project_id:$project,name:'helper',node_type:'function',file_path:'src/lib.rs',start_line:2,end_line:2}; CREATE edges:memory_local CONTENT {project_id:$project,from:nodes:memory_root,to:nodes:memory_neighbor,edge_type:'calls',metadata:{resolution:'exact'}}; CREATE project_metadata:memory_ready CONTENT {project_id:$project,name:'fixture',root_path:$project,metadata:{input_fingerprint:'ready-v1',stats:{graph_complete:true}}}; CREATE file_metadata:memory_file CONTENT {project_id:$project,file_path:'src/lib.rs',content_hash:$hash,file_size:36,modified_at:time::now()}; DEFINE FUNCTION OVERWRITE fn::semantic_search_nodes_via_chunks($project: string, $query: string, $dimension: int, $limit: int, $threshold: float, $vector: array<float>) { RETURN (SELECT <string>id AS node_id FROM nodes WHERE project_id=$project AND name='score'); };")
+        graph.db().query("CREATE nodes:memory_root CONTENT {project_id:$project,name:'score',node_type:'function',file_path:'src/lib.rs',start_line:1,end_line:1}; CREATE nodes:memory_neighbor CONTENT {project_id:$project,name:'helper',node_type:'function',file_path:'src/lib.rs',start_line:2,end_line:2}; CREATE nodes:memory_exact CONTENT {project_id:$project,name:'exact_anchor_target',node_type:'function',file_path:'src/lib.rs',start_line:3,end_line:3}; CREATE edges:memory_local CONTENT {project_id:$project,from:nodes:memory_root,to:nodes:memory_neighbor,edge_type:'calls',metadata:{resolution:'exact'}}; CREATE project_metadata:memory_ready CONTENT {project_id:$project,name:'fixture',root_path:$project,metadata:{input_fingerprint:'ready-v1',stats:{graph_complete:true}}}; CREATE file_metadata:memory_file CONTENT {project_id:$project,file_path:'src/lib.rs',content_hash:$hash,file_size:36,modified_at:time::now()}; DEFINE FUNCTION OVERWRITE fn::semantic_search_nodes_via_chunks($project: string, $query: string, $dimension: int, $limit: int, $threshold: float, $vector: array<float>) { RETURN IF $query CONTAINS 'exact_anchor_target' THEN [] ELSE (SELECT <string>id AS node_id FROM nodes WHERE project_id=$project AND name='score') END; };")
         .bind(("project",project_id.clone())).bind(("hash",codegraph_memory::store::content_hash(&source))).await.unwrap().check().unwrap();
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -274,7 +274,8 @@ mod enabled {
             // Add a current code fixture after the owner restart. The semantic function
             // deliberately returns the production `node_id` shape, rather than `id`.
             std::fs::create_dir_all(root.join("src")).unwrap();
-            let source = "fn score() { 1.0 }\nfn helper() { 2.0 }\n";
+            let source =
+                "fn score() { 1.0 }\nfn helper() { 2.0 }\nfn exact_anchor_target() { 3.0 }\n";
             std::fs::write(root.join("src/lib.rs"), source).unwrap();
             let project_id = root.canonicalize().unwrap().to_string_lossy().into_owned();
             let fixture = Command::new(std::env::current_exe().unwrap())
@@ -329,6 +330,7 @@ mod enabled {
                 .find(|entry| entry["memory"]["grounding"] == "anchored")
                 .unwrap_or_else(|| panic!("Missing anchored memory: {grounded}"));
             assert_eq!(entry["memory"]["grounding"], "anchored", "{grounded}");
+            let original_memory_id = entry["memory"]["id"].as_str().unwrap().to_string();
             assert!(
                 entry["code_context"]["paths"]
                     .as_array()
@@ -360,6 +362,36 @@ mod enabled {
                     .iter()
                     .any(|snippet| snippet["snapshot"] == "current_source")
             );
+            let exact = value(invoke(
+                &root,
+                &home,
+                &url,
+                &["memory", "write", "--input", "-"],
+                Some(
+                    json!({"statement":"exact_anchor_target needs investigation","code_related":true,"evidence":[{"uri":"file:src/lib.rs"}]}),
+                ),
+            ));
+            value(invoke(
+                &root,
+                &home,
+                &url,
+                &["memory", "wait", exact["id"].as_str().unwrap()],
+                None,
+            ));
+            let exact = value(invoke(
+                &root,
+                &home,
+                &url,
+                &["memory", "read", "--input", "-"],
+                Some(
+                    json!({"query":"exact_anchor_target","operation_id":exact["id"],"token_budget":20000}),
+                ),
+            ));
+            assert_eq!(
+                exact["memories"][0]["memory"]["anchors"][0]["symbol"], "exact_anchor_target",
+                "Explicit symbols must anchor even when semantic candidates are empty: {exact}"
+            );
+            assert_eq!(exact["memories"][0]["memory"]["grounding"], "anchored");
             std::fs::write(
                 root.join("src/lib.rs"),
                 "fn score() { 99.0 }\nfn helper() { 2.0 }\n",
@@ -381,7 +413,12 @@ mod enabled {
                 "{changed}"
             );
             assert!(
-                changed["needs_verification"][0]["reasons"]
+                changed["needs_verification"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|entry| entry["memory"]["id"] == original_memory_id)
+                    .expect("Original supporting memory must remain reviewable")["reasons"]
                     .as_array()
                     .unwrap()
                     .iter()

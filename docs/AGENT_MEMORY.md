@@ -130,6 +130,18 @@ An authorized correction supplies its selected target to classification and requ
 one replacement claim; the service applies the correction and preserves verification
 requirements.
 
+Passing `operation_id` to `memory read` restricts semantic candidates to that
+authorized operation's current claims, while retaining scope and lifecycle filters.
+Unrelated observations do not consume its recall budget or affect readiness. Missing
+or unauthorized operations are rejected. Large review entries compact their code
+context against the reserved review capacity, retaining a current-source excerpt
+when available so useful ordinary memories can still fit.
+Explicit code identifiers also resolve through bounded, project-scoped exact-node
+queries alongside semantic search. Supplied file evidence disambiguates matching
+definitions; ambiguous or stale locations remain unresolved. Code memories with
+unavailable grounding appear under `needs_verification`; non-code memories remain
+ordinary retrievable memories without needing anchors.
+
 The classifier proposes kinds and relationships; deterministic policy chooses
 `working`, `durable`, `core`, or `archive`. Session/working-state memory receives a
 24-hour review horizon. Facts/procedures receive 30 days, decisions/episodes 90 days,

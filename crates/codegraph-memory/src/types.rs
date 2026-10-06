@@ -166,6 +166,7 @@ pub struct ReadRequest {
     #[serde(default)]
     pub since: Option<DateTime<Utc>>,
     #[serde(default)]
+    /// Restrict semantic recall to this authorized operation's current claim identities.
     pub operation_id: Option<String>,
     #[serde(default)]
     pub node_ids: Vec<String>,

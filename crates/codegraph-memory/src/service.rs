@@ -243,23 +243,38 @@ impl MemoryService {
                 .is_none_or(|stored| *stored == identity),
             "Memory embedding identity is incompatible; re-embedding is required"
         );
+        let operation = request
+            .operation_id
+            .as_ref()
+            .map(|id| {
+                operation_for(&store.state, id, context)
+                    .cloned()
+                    .context("Operation not found in authorized scope")
+            })
+            .transpose()?;
+        let selected = |claim: &Claim| {
+            operation
+                .as_ref()
+                .is_none_or(|job| job.memory_ids.contains(&claim.id))
+        };
         let pending_embeddings = store
             .state
             .claims
             .values()
-            .any(|v| context.authorizes(v) && v.vectors.is_empty());
+            .any(|v| context.authorizes(v) && selected(v) && v.vectors.is_empty());
         let now = Utc::now();
         let at = request.as_of.unwrap_or(now);
         let mut eligible: BTreeMap<String, Claim> = store
             .state
             .claims
             .values()
-            .filter(|v| is_eligible(v, context, &request, at, now))
+            .filter(|v| selected(v) && is_eligible(v, context, &request, at, now))
             .map(|v| (v.id.clone(), v.clone()))
             .collect();
         if request.as_of.is_some() {
             for revision in &store.state.revisions {
-                if is_eligible(&revision.claim, context, &request, at, now)
+                if selected(&revision.claim)
+                    && is_eligible(&revision.claim, context, &request, at, now)
                     && !store.state.tombstones.contains_key(&revision.claim.id)
                 {
                     let previous = eligible.get(&revision.claim.id);
@@ -282,9 +297,7 @@ impl MemoryService {
                 result.status = "partial".into();
                 result.warnings.push("Authorized observations have embedding_pending; semantic coverage is incomplete".into());
             }
-            if let Some(id) = &request.operation_id {
-                result.operation = operation_for(&store.state, id, context).cloned();
-            }
+            result.operation = operation;
             return pack_with_metadata(
                 Vec::new(),
                 request.limit,
@@ -341,11 +354,6 @@ impl MemoryService {
         for claim in eligible.values().filter(|v| v.tier == Tier::Core) {
             scores.entry(claim.id.clone()).or_insert(0.0);
         }
-        let operation = request
-            .operation_id
-            .as_ref()
-            .and_then(|id| operation_for(&store.state, id, context))
-            .cloned();
         drop(store);
         let mut ranked: Vec<_> = scores.into_iter().collect();
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -406,6 +414,12 @@ impl MemoryService {
                     return None;
                 }
                 let mut reasons = memory.review_reasons.clone();
+                if matches!(
+                    memory.grounding,
+                    Grounding::Unavailable | Grounding::Unresolved
+                ) {
+                    reasons.push("code_grounding_unavailable".into());
+                }
                 if memory.review_after.is_some_and(|v| v <= now) {
                     reasons.push("verification_due".into());
                 }

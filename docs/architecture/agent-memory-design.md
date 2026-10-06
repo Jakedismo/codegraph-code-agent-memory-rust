@@ -790,6 +790,14 @@ authorization before accepting either stage. Explicit corrections pass a service
 target and require one replacement claim; only the service mutates that target. Persisted
 validation diagnostics are specific and content-free; provider errors remain redacted.
 Failed operations retain provisional claims that can be explicitly recalled and forgotten.
+An operation-specific read scopes semantic candidates to that authorized operation's
+current claims before retrieval. Review entries compact code context against reserved
+capacity, preserving current-source excerpts and the full claim's conditions. Extraction
+uses the submitted assertions; supporting code evidence does not add unsolicited claims.
+Anchor discovery combines semantic candidates with bounded exact-symbol candidates,
+scoped by project and supplied file evidence. Only unambiguous, current local code
+locations attach; missing code grounding is reviewable and does not invalidate
+non-code memory.
 The retrieval streams use scoped HNSW/BM25 and native locator-edge candidates,
 database-side normalized `search::rrf()` through `fn::memory_fuse`, existing reranking,
 and bounded one-hop code context. Vector chunks collapse to claim identities before fusion;

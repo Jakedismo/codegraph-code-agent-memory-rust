@@ -449,7 +449,9 @@ impl MemoryRuntime {
                     }
                 }
             } else if request.code_related
-                && let Ok(anchors_found) = self.find_anchors(&request.statement).await
+                && let Ok(anchors_found) = self
+                    .find_anchors(&request.statement, &request.evidence)
+                    .await
             {
                 anchors = anchors_found;
             }
@@ -498,7 +500,7 @@ impl MemoryRuntime {
     pub async fn read(&self, mut request: ReadRequest) -> Result<MemoryContext> {
         if request.node_ids.is_empty()
             && self.graph.is_some()
-            && let Ok(anchors) = self.find_anchors(&request.query).await
+            && let Ok(anchors) = self.find_anchors(&request.query, &[]).await
         {
             request.node_ids = anchors.into_iter().map(|v| v.node_id).collect();
         }
@@ -639,7 +641,9 @@ impl MemoryRuntime {
                         && grounding_attempts < 3
                     {
                         grounding_attempts += 1;
-                        if let Ok(anchors) = self.find_anchors(&entry.memory.statement).await
+                        if let Ok(anchors) = self
+                            .find_anchors(&entry.memory.statement, &entry.memory.evidence)
+                            .await
                             && !anchors.is_empty()
                         {
                             entry.memory.anchors = anchors;
@@ -673,12 +677,31 @@ impl MemoryRuntime {
                         }
                     }
                 }
+                if entry.memory.grounding == Grounding::Anchored {
+                    entry
+                        .reasons
+                        .retain(|reason| reason != "code_grounding_unavailable");
+                } else if matches!(
+                    entry.memory.grounding,
+                    Grounding::Unavailable | Grounding::Unresolved
+                ) && !entry
+                    .reasons
+                    .iter()
+                    .any(|reason| reason == "code_grounding_unavailable")
+                {
+                    entry.reasons.push("code_grounding_unavailable".into());
+                }
                 checked.push(GroundingCheck {
                     memory_id: entry.memory.id.clone(),
                     expected_revision: entry.memory.revision,
                     anchors: entry.memory.anchors.clone(),
                     grounding: entry.memory.grounding,
-                    reasons: entry.reasons.clone(),
+                    reasons: entry
+                        .reasons
+                        .iter()
+                        .filter(|reason| reason.as_str() != "code_grounding_unavailable")
+                        .cloned()
+                        .collect(),
                 });
             }
             self.client
@@ -778,7 +801,7 @@ impl MemoryRuntime {
             .request(self.target(scope).await?, self.context.clone(), action)
             .await
     }
-    async fn find_anchors(&self, text: &str) -> Result<Vec<Anchor>> {
+    async fn find_anchors(&self, text: &str, evidence: &[Evidence]) -> Result<Vec<Anchor>> {
         let graph = self.graph.as_ref().context("Code grounding unavailable")?;
         let vector: Vec<f32> = serde_json::from_value(
             self.client
@@ -792,11 +815,65 @@ impl MemoryRuntime {
         let nodes = graph
             .semantic_search_with_context(text, &vector, vector.len(), 3, 0.75, true)
             .await?;
-        let ids: Vec<String> = nodes
+        let file_uris: Vec<_> = evidence
+            .iter()
+            .filter_map(|item| item.uri.strip_prefix("file:"))
+            .collect();
+        let files: Vec<_> = file_uris
+            .iter()
+            .filter_map(|path| self.root.join(path).canonicalize().ok())
+            .filter(|path| path.starts_with(&self.root))
+            .collect();
+        let file_names: Vec<_> = files
+            .iter()
+            .flat_map(|path| {
+                let mut names = vec![path.to_string_lossy().into_owned()];
+                if let Ok(relative) = path.strip_prefix(&self.root) {
+                    names.push(relative.to_string_lossy().into_owned());
+                }
+                names
+            })
+            .collect();
+        let mut ids = Vec::new();
+        for symbol in memory_symbols(text) {
+            let candidates = async {
+                let candidates: Vec<codegraph_graph::graph_functions::NodeReference> = graph.db()
+                    .query("SELECT <string>id AS id, name, node_type AS kind, {file_path:file_path,start_line:start_line,end_line:end_line} AS location FROM nodes WHERE project_id=$project AND name=$symbol AND ($file_scoped=false OR file_path INSIDE $files) LIMIT 2")
+                    .bind(("project", graph.project_id().to_string()))
+                    .bind(("symbol", symbol.clone()))
+                    .bind(("files", file_names.clone()))
+                    .bind(("file_scoped", !file_uris.is_empty()))
+                    .await?.take(0)?;
+                Ok::<_, anyhow::Error>(candidates)
+            }.await;
+            if let Ok(candidates) = candidates
+                && let Some(id) = exact_memory_symbol(
+                    &self.root,
+                    &symbol,
+                    candidates,
+                    &files,
+                    !file_uris.is_empty(),
+                )
+                && !ids.contains(&id)
+            {
+                ids.push(id);
+            }
+            if ids.len() == 3 {
+                break;
+            }
+        }
+        for id in nodes
             .iter()
             .filter_map(|node| node["node_id"].as_str().or_else(|| node["id"].as_str()))
             .map(str::to_string)
-            .collect();
+        {
+            if ids.len() == 3 {
+                break;
+            }
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -976,6 +1053,122 @@ impl MemoryRuntime {
         entry.reasons.sort();
         entry.reasons.dedup();
         Ok(())
+    }
+}
+
+fn memory_symbols(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|token| {
+            token.len() >= 3
+                && token.len() <= 128
+                && (token.contains('_')
+                    || (token.chars().skip(1).any(char::is_uppercase)
+                        && token.chars().any(char::is_lowercase)))
+        })
+        .map(str::to_string)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .take(16)
+        .collect()
+}
+
+fn exact_memory_symbol(
+    root: &Path,
+    symbol: &str,
+    candidates: Vec<codegraph_graph::graph_functions::NodeReference>,
+    files: &[PathBuf],
+    file_scoped: bool,
+) -> Option<String> {
+    let ids: std::collections::BTreeSet<_> = candidates
+        .into_iter()
+        .filter(|node| {
+            node.name == symbol
+                && node.location.as_ref().is_some_and(|location| {
+                    root.join(&location.file_path)
+                        .canonicalize()
+                        .ok()
+                        .is_some_and(|path| {
+                            path.starts_with(root) && (!file_scoped || files.contains(&path))
+                        })
+                })
+        })
+        .map(|node| node.id)
+        .collect();
+    (ids.len() == 1).then(|| ids.into_iter().next().expect("one exact symbol"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codegraph_graph::graph_functions::{NodeLocation, NodeReference};
+
+    #[test]
+    fn symbol_hints_are_bounded_and_exclude_prose_and_substring_matches() {
+        assert_eq!(
+            memory_symbols("CLI note: execute_agentic_workflow uses GraphToolExecutor."),
+            vec!["GraphToolExecutor", "execute_agentic_workflow"]
+        );
+        assert_eq!(
+            memory_symbols(
+                &(0..100)
+                    .map(|n| format!("code_symbol_{n}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+            .len(),
+            16
+        );
+    }
+
+    #[test]
+    fn exact_symbol_requires_an_unambiguous_project_local_file_match() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        for path in ["first.rs", "second.rs"] {
+            std::fs::write(root.join(path), "fn exact_symbol() {}\n").unwrap();
+        }
+        let candidate = |id: &str, name: &str, path: &str| NodeReference {
+            id: id.into(),
+            name: name.into(),
+            kind: Some("function".into()),
+            location: Some(NodeLocation {
+                file_path: path.into(),
+                start_line: Some(1),
+                end_line: Some(1),
+            }),
+        };
+        let nodes = vec![
+            candidate("first", "exact_symbol", "first.rs"),
+            candidate("second", "exact_symbol", "second.rs"),
+            candidate("partial", "exact_symbol_suffix", "first.rs"),
+        ];
+        assert!(exact_memory_symbol(&root, "exact_symbol", nodes.clone(), &[], false).is_none());
+        assert_eq!(
+            exact_memory_symbol(
+                &root,
+                "exact_symbol",
+                nodes.clone(),
+                &[root.join("first.rs")],
+                true
+            ),
+            Some("first".into())
+        );
+        assert!(exact_memory_symbol(&root, "exact_symbol", nodes, &[], true).is_none());
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        assert!(
+            exact_memory_symbol(
+                &root,
+                "exact_symbol",
+                vec![candidate(
+                    "outside",
+                    "exact_symbol",
+                    outside.path().to_str().unwrap()
+                )],
+                &[],
+                false
+            )
+            .is_none()
+        );
     }
 }
 fn nonempty_env(key: &str) -> Option<String> {

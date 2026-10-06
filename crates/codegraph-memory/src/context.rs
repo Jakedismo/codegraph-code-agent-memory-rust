@@ -110,8 +110,12 @@ pub fn pack_with_metadata(
     let reserved = budget / 4;
     let mut warning_used = 0;
     let mut remaining_warnings = Vec::new();
-    for entry in warnings {
-        let size = counter.count(&serde_json::to_string(&entry)?);
+    for mut entry in warnings {
+        let mut size = counter.count(&serde_json::to_string(&entry)?);
+        if size > reserved.saturating_sub(warning_used) {
+            compact_code_context(&mut entry);
+            size = counter.count(&serde_json::to_string(&entry)?);
+        }
         if warning_used == 0 || warning_used + size <= reserved {
             warning_used += size;
             ordered.push(entry);
@@ -121,8 +125,13 @@ pub fn pack_with_metadata(
     }
     ordered.extend(ordinary.into_iter().filter(|v| v.memory.tier != Tier::Core));
     ordered.extend(remaining_warnings);
+    let entry_budget = budget / limit.min(ordered.len()).max(1);
     for mut entry in ordered {
         let mandatory = entry.memory.tier == Tier::Core && entry.reasons.is_empty();
+        // Large code excerpts should not crowd out other relevant whole claims.
+        if counter.count(&serde_json::to_string(&entry)?) > entry_budget {
+            compact_code_context(&mut entry);
+        }
         let mut candidate = pack.clone();
         candidate
             .retrieved_memory_refs
@@ -133,17 +142,7 @@ pub fn pack_with_metadata(
             candidate.needs_verification.push(entry.clone());
         }
         if packed_cost(&candidate, counter)? > budget {
-            entry.code_context.edges.clear();
-            entry.code_context.paths.truncate(1);
-            entry.code_context.nodes.truncate(3);
-            entry.code_context.snippets.truncate(1);
-            entry.code_context.truncated = true;
-            if let Some(snippet) = entry.code_context.snippets.first_mut()
-                && let Some(text) = snippet["text"].as_str()
-            {
-                snippet["text"] =
-                    serde_json::json!(text.lines().take(8).collect::<Vec<_>>().join("\n"));
-            }
+            compact_code_context(&mut entry);
             if entry.reasons.is_empty() {
                 *candidate.memories.last_mut().expect("appended entry") = entry.clone();
             } else {
@@ -180,4 +179,26 @@ pub fn pack_with_metadata(
         "Memory response wrapper exceeds context budget"
     );
     Ok(pack)
+}
+
+fn compact_code_context(entry: &mut MemoryEntry) {
+    entry.code_context.edges.clear();
+    entry.code_context.paths.truncate(1);
+    entry.code_context.nodes.truncate(3);
+    // Retain a current source excerpt when available, rather than only an older snapshot.
+    let current = entry
+        .code_context
+        .snippets
+        .iter()
+        .position(|snippet| snippet["snapshot"] == "current_source");
+    if let Some(index) = current {
+        entry.code_context.snippets.swap(0, index);
+    }
+    entry.code_context.snippets.truncate(1);
+    entry.code_context.truncated = true;
+    if let Some(snippet) = entry.code_context.snippets.first_mut()
+        && let Some(text) = snippet["text"].as_str()
+    {
+        snippet["text"] = serde_json::json!(text.lines().take(8).collect::<Vec<_>>().join("\n"));
+    }
 }

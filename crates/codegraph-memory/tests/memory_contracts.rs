@@ -3,7 +3,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use codegraph_memory::{store::Store, *};
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 struct Embeddings(&'static str);
 #[async_trait]
@@ -207,6 +207,139 @@ async fn provider_failure_does_not_persist_request_content_or_credentials() {
         failed.error.as_deref(),
         Some("Permanent provider or proposal validation failure")
     );
+}
+
+#[tokio::test]
+async fn operation_recall_is_scoped_to_its_current_claims_before_ranking() {
+    let service = service().await;
+    let context = context("project", Some("session"));
+    let target = active(
+        &service,
+        &context,
+        "Keep scoring deterministic and keep scoring ordered",
+    )
+    .await;
+    active(&service, &context, "An unrelated scoring note").await;
+    let mut pending = write("A pending scoring observation");
+    pending.asynchronous = true;
+    service.write(&context, pending).await.unwrap();
+    let mut request = read("scoring");
+    request.operation_id = Some(target.id.clone());
+    let recalled = service.read(&context, request.clone()).await.unwrap();
+    assert_eq!(recalled.status, "ok");
+    let ids: BTreeSet<_> = recalled
+        .memories
+        .iter()
+        .map(|entry| entry.memory.id.clone())
+        .collect();
+    assert_eq!(ids, target.memory_ids.into_iter().collect());
+    assert_eq!(recalled.operation.unwrap().id, target.id);
+    let mut other = context.clone();
+    other.owner_id = "mallory".into();
+    assert!(
+        service
+            .read(&other, request.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("authorized scope")
+    );
+    request.operation_id = Some("missing-operation".into());
+    assert!(service.read(&context, request).await.is_err());
+}
+
+#[tokio::test]
+async fn unavailable_code_grounding_is_reviewable_without_hiding_non_code_memory() {
+    let service = service().await;
+    let context = context("project", None);
+    let mut request = write("scoring code needs investigation");
+    request.code_related = true;
+    let operation = service.write(&context, request).await.unwrap();
+    service.process_next().await.unwrap();
+    let mut request = read("scoring");
+    request.operation_id = Some(operation.id);
+    let result = service.read(&context, request).await.unwrap();
+    assert!(result.memories.is_empty());
+    assert_eq!(result.needs_verification.len(), 1);
+    assert!(
+        result.needs_verification[0]
+            .reasons
+            .iter()
+            .any(|reason| reason == "code_grounding_unavailable")
+    );
+    let ordinary = active(&service, &context, "non-code scoring preference").await;
+    let mut request = read("scoring");
+    request.operation_id = Some(ordinary.id);
+    let result = service.read(&context, request).await.unwrap();
+    assert_eq!(result.memories.len(), 1);
+    assert!(result.needs_verification.is_empty());
+}
+
+#[tokio::test]
+async fn large_review_context_does_not_displace_relevant_ordinary_memory() {
+    use codegraph_memory::context::{ConservativeCounter, pack};
+    let service = service().await;
+    let context = context("project", None);
+    active(&service, &context, "scoring rule").await;
+    let mut ordinary = service
+        .read(&context, read("scoring"))
+        .await
+        .unwrap()
+        .memories
+        .remove(0);
+    ordinary.memory.id = "ordinary".into();
+    ordinary.reference = "memory:ordinary@1".into();
+    let mut warning = ordinary.clone();
+    warning.memory.id = "warning".into();
+    warning.reference = "memory:warning@1".into();
+    warning.reasons = vec!["corrected_claim_requires_verification".into()];
+    warning.memory.review_reasons = warning.reasons.clone();
+    warning.code_context.snippets = vec![
+        serde_json::json!({"snapshot":"historical","text":"old source line\n".repeat(100)}),
+        serde_json::json!({"snapshot":"current_source","text":"current source line\n".repeat(100)}),
+    ];
+    let warning_cost = pack(vec![warning.clone()], 10, 100_000, &ConservativeCounter)
+        .unwrap()
+        .estimated_tokens;
+    let ordinary_cost = pack(vec![ordinary.clone()], 10, 100_000, &ConservativeCounter)
+        .unwrap()
+        .estimated_tokens;
+    let budget = warning_cost + ordinary_cost / 2;
+    let packed = pack(
+        vec![ordinary.clone(), warning.clone()],
+        10,
+        budget,
+        &ConservativeCounter,
+    )
+    .unwrap();
+    assert_eq!(packed.memories.len(), 1);
+    assert_eq!(packed.memories[0].reference, ordinary.reference);
+    assert_eq!(packed.needs_verification.len(), 1);
+    let review = &packed.needs_verification[0];
+    assert_eq!(review.memory.statement, warning.memory.statement);
+    assert!(review.code_context.truncated);
+    assert_eq!(
+        review.code_context.snippets[0]["snapshot"],
+        "current_source"
+    );
+    assert_eq!(
+        review.code_context.snippets[0]["text"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .count(),
+        8
+    );
+    assert!(packed.estimated_tokens <= budget);
+    warning.reasons.clear();
+    warning.memory.review_reasons.clear();
+    let packed = pack(vec![warning, ordinary], 10, budget, &ConservativeCounter).unwrap();
+    assert_eq!(
+        packed.memories.len(),
+        2,
+        "Large ordinary excerpts must not displace other claims either"
+    );
+    assert!(packed.memories[0].code_context.truncated);
 }
 
 #[tokio::test]
