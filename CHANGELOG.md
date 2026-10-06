@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Native code-memory projection
+
+- A content-free project projection uses native relations to current code nodes and
+  joins them with bounded directed code neighbors. Exact claim revisions return to
+  durable semantic retrieval for scope, lifecycle, and revision validation.
+- A transactional, paginated outbox synchronizes changes and deletion markers;
+  code input-fingerprint changes reset projection cursors for replay. User/session
+  memories, statements, snippets, and source evidence remain outside the projection.
+- Existing code owners write the projection; durable memory retains its independent
+  owner/store lifecycle as specified by the original design. Incomplete/unavailable
+  projection access exposes partial context without disabling semantic recall.
+- Offline fixtures cover native traversal, rebuilds, cursor conflicts, pagination,
+  scope isolation, stale/forgotten reference rejection, and end-to-end CLI results.
+
 ### Changed - Database-native memory retrieval
 
 - Scoped HNSW, BM25, and native locator-edge candidates now fuse inside SurrealDB

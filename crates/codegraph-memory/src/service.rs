@@ -211,6 +211,10 @@ impl MemoryService {
             request.limit <= 100 && request.token_budget <= 100_000,
             "Memory read limits are too large"
         );
+        ensure!(
+            request.graph_memory_refs.len() <= 100,
+            "Too many graph-side memory references"
+        );
         let query = self.embedder.query(&request.query).await?;
         validate_vectors(std::slice::from_ref(&query), true)?;
         let identity = self.embedder.identity()?;
@@ -273,6 +277,16 @@ impl MemoryService {
                 result,
             );
         }
+        let graph_candidates: Vec<_> = eligible
+            .values()
+            .filter(|claim| {
+                request
+                    .graph_memory_refs
+                    .contains(&format!("memory:{}@{}", claim.id, claim.revision))
+            })
+            .map(|claim| claim.id.clone())
+            .take(100)
+            .collect();
         let ranked = if request.as_of.is_some() {
             // Historical versions retain their own vectors; fusion still runs in SurrealDB.
             let graph = eligible
@@ -291,6 +305,7 @@ impl MemoryService {
                     rank_semantic(&eligible, &query),
                     rank_lexical(&eligible, &request.query),
                     graph,
+                    graph_candidates,
                 ])
                 .await?
         } else {
@@ -301,7 +316,7 @@ impl MemoryService {
                     query.clone(),
                     eligible.keys().cloned().collect(),
                     request.node_ids.clone(),
-                    Vec::new(),
+                    graph_candidates,
                 )
                 .await?
         };
@@ -368,6 +383,9 @@ impl MemoryService {
                         .anchors
                         .iter()
                         .any(|a| request.node_ids.contains(&a.node_id))
+                    && !request
+                        .graph_memory_refs
+                        .contains(&format!("memory:{}@{}", memory.id, memory.revision))
                 {
                     return None;
                 }

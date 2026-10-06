@@ -280,6 +280,16 @@ mod enabled {
                     .as_array()
                     .unwrap()
                     .iter()
+                    .any(|path| path["memory_anchor"].is_string()
+                        && path["code_hop_count"] == 0
+                        && path["anchor_role"] == "evidence"),
+                "Native projection join must reach the returned memory: {grounded}"
+            );
+            assert!(
+                entry["code_context"]["paths"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
                     .any(|path| path["code_hops"] == 1)
             );
             assert!(

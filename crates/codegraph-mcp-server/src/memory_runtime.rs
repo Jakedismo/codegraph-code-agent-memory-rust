@@ -347,6 +347,10 @@ impl MemoryRuntime {
                 }),
             )
             .await?;
+        ensure!(
+            value["memory_schema_version"] == 2,
+            "Running memory owner predates native schema v2; run 'codegraph memory service stop' and reconnect with this binary"
+        );
         if scope == Scope::User {
             let mut embedding = self.settings.config.embedding.clone();
             embedding.jina_api_key = None;
@@ -359,7 +363,8 @@ impl MemoryRuntime {
         Ok(value)
     }
     async fn register(&self, path: &Path, settings: &Settings) -> Result<()> {
-        self.client
+        let response = self
+            .client
             .request(
                 path.to_path_buf(),
                 self.context.clone(),
@@ -369,6 +374,10 @@ impl MemoryRuntime {
                 }),
             )
             .await?;
+        ensure!(
+            response["memory_schema_version"] == 2,
+            "Running memory owner predates native schema v2; run 'codegraph memory service stop' and reconnect with this binary"
+        );
         Ok(())
     }
     async fn user_settings(&self) -> Result<Settings> {
@@ -453,6 +462,39 @@ impl MemoryRuntime {
             .request(path, self.context.clone(), Action::Write(request))
             .await
     }
+    async fn sync_projection(&self, graph: &GraphFunctions) -> Result<(String, bool)> {
+        use codegraph_core::memory_projection::{ProjectionBatch, ProjectionCursor};
+        let source = codegraph_memory::store::digest(&(
+            &self.context.owner_id,
+            &self.context.project_id,
+            graph.project_id(),
+        ))?;
+        let mut cursor: ProjectionCursor = graph.memory_projection_cursor(&source).await?;
+        for _ in 0..8 {
+            let value = self
+                .client
+                .request(
+                    self.project_store.clone(),
+                    self.context.clone(),
+                    Action::ProjectionChanges {
+                        graph_project_id: graph.project_id().into(),
+                        cursor: cursor.clone(),
+                    },
+                )
+                .await?;
+            let batch: ProjectionBatch = serde_json::from_value(value)?;
+            ensure!(
+                batch.source_id == source,
+                "Memory projection source mismatch"
+            );
+            graph.apply_memory_projection(&batch, &cursor).await?;
+            cursor = batch.cursor;
+            if batch.complete {
+                return Ok((source, true));
+            }
+        }
+        Ok((source, false))
+    }
     pub async fn read(&self, mut request: ReadRequest) -> Result<MemoryContext> {
         if request.node_ids.is_empty()
             && self.graph.is_some()
@@ -462,6 +504,60 @@ impl MemoryRuntime {
         }
         let mut sources = Vec::new();
         let mut warnings = Vec::new();
+        let mut projection_candidates = Vec::new();
+        if request.scope != Some(Scope::User)
+            && let Some(graph) = &self.graph
+        {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                self.sync_projection(graph),
+            )
+            .await
+            {
+                Ok(Ok((source, complete))) => {
+                    if !complete {
+                        warnings.push("Code-side memory projection is partially synchronized; semantic recall remains available".into());
+                    }
+                    match graph
+                        .memory_projection_candidates(&source, &request.node_ids)
+                        .await
+                    {
+                        Ok(candidates) => {
+                            for candidate in &candidates {
+                                if let (Some(id), Some(revision)) = (
+                                    candidate["memory_id"].as_str(),
+                                    candidate["revision"].as_u64(),
+                                ) {
+                                    request
+                                        .graph_memory_refs
+                                        .push(format!("memory:{id}@{revision}"));
+                                }
+                            }
+                            request.graph_memory_refs.sort();
+                            request.graph_memory_refs.dedup();
+                            if request.graph_memory_refs.len() > 100 {
+                                request.graph_memory_refs.truncate(100);
+                                warnings.push(
+                                    "Graph-side memory candidates truncated at 100 references"
+                                        .into(),
+                                );
+                            }
+                            projection_candidates = candidates;
+                        }
+                        Err(error) => {
+                            warnings.push(format!("Code-side memory joins unavailable: {error}"))
+                        }
+                    }
+                }
+                Ok(Err(error)) => warnings.push(format!(
+                    "Code-side memory projection unavailable: {error:#}"
+                )),
+                Err(_) => warnings.push(
+                    "Code-side memory projection timed out; semantic recall remains available"
+                        .into(),
+                ),
+            }
+        }
         let mut project_request = request.clone();
         project_request.limit = 100;
         project_request.token_budget = 100_000;
@@ -487,6 +583,7 @@ impl MemoryRuntime {
                 Ok(path) => {
                     let mut user_request = project_request.clone();
                     user_request.scope = Some(Scope::User);
+                    user_request.graph_memory_refs.clear();
                     match self
                         .client
                         .request(
@@ -524,6 +621,18 @@ impl MemoryRuntime {
                 .chain(source.needs_verification)
                 .collect();
             for entry in &mut source_entries {
+                if path == self.project_store {
+                    for candidate in &projection_candidates {
+                        if candidate["memory_id"] == entry.memory.id
+                            && candidate["revision"] == entry.memory.revision
+                        {
+                            entry.code_context.truncated |= candidate["paths_truncated"] == true;
+                            if let Some(paths) = candidate["paths"].as_array() {
+                                entry.code_context.paths.extend(paths.iter().cloned());
+                            }
+                        }
+                    }
+                }
                 if let Some(graph) = &self.graph {
                     if entry.memory.grounding == Grounding::Unavailable
                         && entry.memory.anchors.is_empty()

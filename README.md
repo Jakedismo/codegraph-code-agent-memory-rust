@@ -366,6 +366,8 @@ Memories retain their original authority. Learned procedures and core eligibilit
 
 ## Architecture
 
+Memory uses typed SurrealDB records, native provenance and claim relations, identity-specific HNSW indexes, and database-side `search::rrf()` over semantic, BM25, and graph candidates. A rebuildable project projection provides local memory-to-code relations and joins with indexed nodes/edges. Durable memory stays separate from the code index; the projection contains references rather than memory text and is revalidated against current claim revisions.
+
 The implemented architecture adds durable memory and shared context assembly to the existing code-analysis foundation:
 
 ```text

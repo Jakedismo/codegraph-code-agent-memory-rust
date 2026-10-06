@@ -122,6 +122,150 @@ impl GraphFunctions {
         &self.project_id
     }
 
+    /// Local projection cursors reset when the rebuildable code snapshot changes.
+    pub async fn memory_projection_cursor(
+        &self,
+        source_id: &str,
+    ) -> Result<codegraph_core::memory_projection::ProjectionCursor> {
+        use codegraph_core::memory_projection::ProjectionCursor;
+        self.db
+            .query(include_str!(
+                "../../../schema/agent_memory_projection_v1.surql"
+            ))
+            .await
+            .map_err(|e| CodeGraphError::Database(e.to_string()))?
+            .check()
+            .map_err(|e| CodeGraphError::Database(e.to_string()))?;
+        self.db.query(
+            "BEGIN TRANSACTION; LET $fingerprint=(SELECT VALUE metadata.input_fingerprint FROM project_metadata WHERE project_id=$project LIMIT 1)[0]; LET $previous=(SELECT * FROM memory_projection_cursor WHERE source_id=$source AND project_id=$project LIMIT 1)[0]; IF $previous != NONE AND $previous.code_input_fingerprint != $fingerprint { DELETE memory_code_anchor WHERE source_id=$source AND project_id=$project; DELETE memory_projection WHERE source_id=$source AND project_id=$project; DELETE memory_projection_cursor WHERE source_id=$source AND project_id=$project; }; COMMIT TRANSACTION;"
+        ).bind(("project",self.project_id.clone())).bind(("source",source_id.to_string())).await
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?.check()
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?;
+        let rows:Vec<serde_json::Value>=self.db.query("SELECT generation,memory_id FROM memory_projection_cursor WHERE source_id=$source AND project_id=$project LIMIT 1;")
+            .bind(("project",self.project_id.clone())).bind(("source",source_id.to_string())).await
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?.check()
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?.take(0)
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?;
+        match rows.into_iter().next() {
+            Some(row) => serde_json::from_value(row)
+                .map_err(|e| CodeGraphError::Database(format!("Invalid projection cursor: {e}"))),
+            None => Ok(ProjectionCursor::default()),
+        }
+    }
+
+    /// Native relations point only to existing local code nodes; no memory text is copied.
+    pub async fn apply_memory_projection(
+        &self,
+        batch: &codegraph_core::memory_projection::ProjectionBatch,
+        expected: &codegraph_core::memory_projection::ProjectionCursor,
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        if batch.changes.len() > 256 {
+            return Err(CodeGraphError::Database(
+                "Unbounded memory projection batch".into(),
+            ));
+        }
+        let key = |text: &str| -> String {
+            Sha256::digest(text.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        };
+        let mut changes = Vec::new();
+        for change in &batch.changes {
+            let record = key(&format!("{}:{}", batch.source_id, change.memory_id));
+            let anchors=change.anchors.iter().filter(|anchor|anchor.graph_project_id==self.project_id).map(|anchor| {
+                let node=if anchor.node_id.starts_with("nodes:"){anchor.node_id.clone()}else{format!("nodes:{}",anchor.node_id)};
+                serde_json::json!({"node":node,"edge":key(&format!("{}:{node}",record)),"role":if anchor.supporting{"evidence"}else{"related"}})
+            }).collect::<Vec<_>>();
+            changes.push(serde_json::json!({"record":record,"memory_id":change.memory_id,"revision":change.revision,"enabled":change.enabled,"anchors":anchors}));
+        }
+        self.db.query(
+            "BEGIN TRANSACTION;
+             LET $old=(SELECT * FROM memory_projection_cursor WHERE source_id=$source AND project_id=$project LIMIT 1)[0];
+             LET $generation=$old.generation ?? 0; LET $memory_id=$old.memory_id ?? '';
+             IF $generation != $expected_generation OR $memory_id != $expected_id { THROW 'Memory projection cursor conflict'; };
+             FOR $change IN $changes {
+                LET $record=type::record('memory_projection',$change.record);
+                DELETE memory_code_anchor WHERE source_id=$source AND project_id=$project AND in=$record;
+                IF $change.enabled {
+                    UPSERT $record CONTENT {source_id:$source,project_id:$project,memory_id:$change.memory_id,revision:$change.revision};
+                    FOR $anchor IN $change.anchors {
+                        LET $node=type::record($anchor.node);
+                        LET $found=(SELECT VALUE id FROM nodes WHERE project_id=$project AND id=$node LIMIT 1)[0];
+                        IF $found != NONE {
+                            LET $edge=type::record('memory_code_anchor',$anchor.edge);
+                            RELATE $record->$edge->$node CONTENT {source_id:$source,project_id:$project,role:$anchor.role};
+                        };
+                    };
+                } ELSE { DELETE $record; };
+             };
+             LET $fingerprint=(SELECT VALUE metadata.input_fingerprint FROM project_metadata WHERE project_id=$project LIMIT 1)[0];
+             LET $cursor=type::record('memory_projection_cursor',$source);
+             UPSERT $cursor CONTENT {source_id:$source,project_id:$project,generation:$generation_next,memory_id:$memory_id_next,code_input_fingerprint:$fingerprint};
+             COMMIT TRANSACTION;"
+        ).bind(("source",batch.source_id.clone())).bind(("project",self.project_id.clone())).bind(("changes",changes))
+            .bind(("expected_generation",expected.generation)).bind(("expected_id",expected.memory_id.clone()))
+            .bind(("generation_next",batch.cursor.generation)).bind(("memory_id_next",batch.cursor.memory_id.clone())).await
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?.check()
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Scope-bounded native joins between projection references, anchors, nodes and code edges.
+    pub async fn memory_projection_candidates(
+        &self,
+        source_id: &str,
+        node_ids: &[String],
+    ) -> Result<Vec<serde_json::Value>> {
+        let ids = node_ids.iter().take(32).cloned().collect::<Vec<_>>();
+        let mut response=self.db.query(
+            "LET $roots=SELECT VALUE id FROM nodes WHERE project_id=$project AND type::string(id) INSIDE $ids LIMIT 32;
+             LET $edges=SELECT id,from,to,edge_type,metadata FROM edges WHERE project_id=$project AND (from INSIDE $roots OR to INSIDE $roots) LIMIT 64;
+             LET $neighbors=SELECT VALUE id FROM nodes WHERE project_id=$project AND (id INSIDE $edges.from OR id INSIDE $edges.to) LIMIT 32;
+             LET $candidates=SELECT in.memory_id AS memory_id,in.revision AS revision,type::string(out) AS node_id,type::string(id) AS anchor_id,role AS anchor_role,IF out INSIDE $roots THEN 0 ELSE 1 END AS code_hop_count FROM memory_code_anchor WHERE project_id=$project AND source_id=$source AND (out INSIDE $roots OR out INSIDE $neighbors) ORDER BY code_hop_count ASC,memory_id ASC LIMIT 100;
+             RETURN {candidates:$candidates,roots:$roots,edges:$edges};"
+        ).bind(("source",source_id.to_string())).bind(("project",self.project_id.clone())).bind(("ids",ids)).await
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?.check()
+            .map_err(|e|CodeGraphError::Database(e.to_string()))?;
+        let raw: surrealdb::types::Value = response
+            .take(response.num_statements() - 1)
+            .map_err(|e| CodeGraphError::Database(e.to_string()))?;
+        let context = surreal_to_json(raw);
+        let roots = context["roots"].as_array().cloned().unwrap_or_default();
+        let edges = context["edges"].as_array().cloned().unwrap_or_default();
+        let mut candidates = context["candidates"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for candidate in &mut candidates {
+            let node = candidate["node_id"].clone();
+            let mut paths = Vec::new();
+            if candidate["code_hop_count"] == 0 {
+                paths.push(serde_json::json!({"kind":"retrieval","matched_node":node,"anchor_node":node,"code_hop_count":0,"memory_anchor":candidate["anchor_id"],"anchor_role":candidate["anchor_role"]}));
+            } else {
+                for edge in &edges {
+                    let from = &edge["from"];
+                    let to = &edge["to"];
+                    let matched = if *from == node && roots.contains(to) {
+                        Some((to, "incoming"))
+                    } else if *to == node && roots.contains(from) {
+                        Some((from, "outgoing"))
+                    } else {
+                        None
+                    };
+                    if let Some((matched, direction)) = matched {
+                        paths.push(serde_json::json!({"kind":"retrieval","matched_node":matched,"anchor_node":node,"code_hop_count":1,"direction":direction,"code_edge":edge,"memory_anchor":candidate["anchor_id"],"anchor_role":candidate["anchor_role"]}));
+                    }
+                }
+            }
+            candidate["paths_truncated"] = serde_json::json!(paths.len() > 4);
+            paths.truncate(4);
+            candidate["paths"] = serde_json::json!(paths);
+        }
+        Ok(candidates)
+    }
+
     /// Expose Surreal DB handle (for diagnostics/tests only)
     pub fn db(&self) -> Arc<Surreal<Any>> {
         self.db.clone()

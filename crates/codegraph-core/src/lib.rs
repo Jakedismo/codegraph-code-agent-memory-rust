@@ -9,6 +9,7 @@ pub mod error;
 pub mod incremental;
 pub mod integration;
 pub mod memory;
+pub mod memory_projection;
 pub mod mmap;
 pub mod node;
 pub mod optimization_coordinator;

@@ -148,13 +148,18 @@ record references requiring a cross-database join, and never cascade on code nod
 Historical locators and fingerprints survive when a node disappears or an index is unavailable.
 
 Database-native integration retains this separation: the durable memory database uses
-native relations to its own logical code-locator records. The code database can hold a
-rebuildable, project-scoped memory projection with local relations to `nodes`. Projection
+native relations to its own logical code-locator records. The code database holds a
+rebuildable, project-scoped, content-free memory projection with local relations to `nodes`. Projection
 records are retrieval aids, never the authority for revisions, scope, or forgetting; candidate
 IDs must be checked against durable memory before delivery. User/session content is not copied
 into the project projection. An unavailable projection does not block semantic recall.
 Code rebuilds may remove this projection, while durable locators/history remain intact.
-
+The typed durable outbox records only the latest project-claim reference/anchor change,
+including content-free deletion markers. Cursor-paginated synchronization is bounded and
+transactional within each store; no atomic transaction across stores is claimed. The code
+owner writes local relations, and resets projection cursors when its input fingerprint changes.
+Native joins return exact revisions and bounded directed paths; durable retrieval rejects
+stale, forgotten, inaccessible, or ineligible references before ranking and delivery.
 
 Use one owning process per embedded store. Project MCP servers access their project owner;
 CLI commands attach to an existing owner rather than opening a locked store. Multiple project

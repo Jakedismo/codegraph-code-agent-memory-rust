@@ -3,6 +3,7 @@
 DEFINE TABLE IF NOT EXISTS memory_meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS schema_version ON memory_meta TYPE int;
 DEFINE FIELD IF NOT EXISTS generation ON memory_meta TYPE int;
+DEFINE FIELD IF NOT EXISTS projection_version ON memory_meta TYPE option<int>;
 DEFINE FIELD IF NOT EXISTS embedding_identity ON memory_meta TYPE option<string>;
 
 DEFINE TABLE IF NOT EXISTS memory_claim SCHEMAFULL;
@@ -127,3 +128,14 @@ DEFINE INDEX IF NOT EXISTS memory_locator_target ON memory_code_locator FIELDS g
 DEFINE INDEX IF NOT EXISTS memory_relationship_endpoints ON memory_relationship FIELDS in,out,kind;
 DEFINE INDEX IF NOT EXISTS memory_derivation_endpoints ON memory_derived_from FIELDS in,out;
 DEFINE INDEX IF NOT EXISTS memory_evidence_claim ON memory_evidence FIELDS claim,revision;
+
+-- Content-free outbox, one latest change per project claim. Never copies statements/snippets.
+DEFINE TABLE IF NOT EXISTS memory_projection_change SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS memory_id ON memory_projection_change TYPE string;
+DEFINE FIELD IF NOT EXISTS owner_id ON memory_projection_change TYPE string;
+DEFINE FIELD IF NOT EXISTS project_id ON memory_projection_change TYPE string;
+DEFINE FIELD IF NOT EXISTS revision ON memory_projection_change TYPE int;
+DEFINE FIELD IF NOT EXISTS generation ON memory_projection_change TYPE int;
+DEFINE FIELD IF NOT EXISTS enabled ON memory_projection_change TYPE bool;
+DEFINE FIELD IF NOT EXISTS anchors ON memory_projection_change TYPE array<object> FLEXIBLE;
+DEFINE INDEX IF NOT EXISTS memory_projection_queue ON memory_projection_change FIELDS owner_id,project_id,generation,memory_id;

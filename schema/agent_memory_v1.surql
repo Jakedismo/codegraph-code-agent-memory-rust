@@ -1,4 +1,5 @@
--- Independent durable-memory schema. Never applied to the derived code index.
+-- Legacy v1 bootstrap retained for migration fixtures; not the current runtime schema.
+-- See agent_memory_v2.surql, agent_memory_vectors.surql, and agent_memory_queries.surql.
 DEFINE TABLE IF NOT EXISTS memory_state SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS memory_claim SCHEMALESS;
 DEFINE ANALYZER IF NOT EXISTS memory_text TOKENIZERS blank,class FILTERS lowercase,ascii;

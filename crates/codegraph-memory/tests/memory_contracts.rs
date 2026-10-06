@@ -834,3 +834,73 @@ async fn equivalent_observation_adds_anchors_without_verifying_the_claim() {
     assert_eq!(memory.evidence_state, EvidenceState::Reported);
     assert_eq!(memory.confirmed_at, None);
 }
+
+#[tokio::test]
+async fn graph_projection_candidates_require_current_revision_and_scope() {
+    let service = service().await;
+    let context = context("p", None);
+    service
+        .write(&context, write("Keep scalar scoring stable"))
+        .await
+        .unwrap();
+    service.process_next().await.unwrap();
+    let claim = service
+        .store
+        .lock()
+        .await
+        .state
+        .claims
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let mut request = read("cats");
+    request.graph_memory_refs = vec![format!("memory:{}@{}", claim.id, claim.revision + 1)];
+    assert!(
+        service
+            .read(&context, request.clone())
+            .await
+            .unwrap()
+            .memories
+            .is_empty()
+    );
+    request.graph_memory_refs = vec![format!("memory:{}@{}", claim.id, claim.revision)];
+    assert_eq!(
+        service
+            .read(&context, request.clone())
+            .await
+            .unwrap()
+            .memories[0]
+            .memory
+            .id,
+        claim.id
+    );
+    let mut foreign = context.clone();
+    foreign.project_id = "other".into();
+    assert!(
+        service
+            .read(&foreign, request.clone())
+            .await
+            .unwrap()
+            .memories
+            .is_empty()
+    );
+    service
+        .delete(
+            &context,
+            serde_json::from_value(
+                serde_json::json!({"memory_id":claim.id,"expected_revision":claim.revision}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        service
+            .read(&context, request)
+            .await
+            .unwrap()
+            .memories
+            .is_empty()
+    );
+}

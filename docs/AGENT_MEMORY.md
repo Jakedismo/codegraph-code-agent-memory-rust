@@ -198,6 +198,8 @@ persisted UUID preserves identity across moves, and Git worktrees share the comm
 repository's memory. User memory lives in `~/.codegraph/user-memory-db`. User
 embedding settings are pinned independently of calling-project configuration.
 Memory schema v2 and vector partitions are independent of graph schema/re-indexing.
+After upgrading a binary, stop any older owner with `codegraph memory service stop`
+and reconnect. Registration rejects owners that cannot serve native schema v2.
 Existing v1 payload stores migrate transactionally on open: typed claims, observations,
 revisions, jobs, idempotency, tombstones, evidence, and native relations replace the
 payload snapshot. A failed migration retains its legacy source. Stable record IDs and
@@ -207,6 +209,23 @@ indexes. `schema/agent_memory_vectors.surql` declares the dynamically instantiat
 HNSW partitions. Native `memory_relationship`, `memory_derived_from`, and `memory_link`
 edges support provenance traversal; links end at durable logical code locators, never
 at records in a different database.
+
+When a code index is available, recall synchronizes a content-free project projection
+using a transactional outbox. `schema/agent_memory_projection_v1.surql` defines local
+`memory_projection -> memory_code_anchor -> nodes` relations in that code database.
+Native queries join these references to current nodes and directed code edges, then
+send exact claim revisions back to durable retrieval for authority/eligibility checks.
+User/session memories, statements, evidence, and snippets are never copied into it.
+Forgotten or changed references cannot authorize recall from an outdated projection.
+
+Synchronization uses 256-change pages, a two-second allowance, and at most eight pages
+per read. Candidates are bounded to 32 root/neighbor nodes, 64 code edges, 100 anchor
+rows, and four paths per anchor; truncation is reported. Projection cursors reset on
+code input-fingerprint changes, and an erased projection can replay the durable outbox.
+A locked/unavailable index or incomplete projection leaves semantic recall available
+with declared partial context where applicable. The existing code-store owner handles
+local projection writes; the memory owner continues to open only durable memory stores.
+
 
 ```sh
 codegraph memory service status

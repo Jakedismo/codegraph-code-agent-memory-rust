@@ -39,6 +39,10 @@ pub enum Action {
     GroundingChecks(Vec<GroundingCheck>),
     Reembed(Registration),
     ValidateReferences(Vec<String>),
+    ProjectionChanges {
+        graph_project_id: String,
+        cursor: codegraph_core::memory_projection::ProjectionCursor,
+    },
 }
 #[derive(Serialize, Deserialize)]
 pub struct Request {
@@ -254,21 +258,21 @@ pub async fn run(runtime_dir: &Path, factory: Arc<dyn ServiceFactory>) -> Result
                         if let Some(existing)=guard.get(&request.store_path) {
                             let configured=factory.configure(existing.clone(),registration).await?;
                             guard.insert(request.store_path,configured);
-                            return Ok(serde_json::json!({"status":"registered"}));
+                            return Ok(serde_json::json!({"status":"registered","memory_schema_version":2}));
                         }
                         let service=factory.create(registration).await?;
                         guard.insert(request.store_path,service);
                         // Discovery metadata contains paths only, never provider settings or credentials.
                         let registry=guard.keys().cloned().collect::<Vec<_>>();
                         let temporary=registry_path.with_extension("tmp");std::fs::write(&temporary,serde_json::to_vec(&registry)?)?;std::fs::rename(temporary,&registry_path)?;
-                        return Ok(serde_json::json!({"status":"registered"}));
+                        return Ok(serde_json::json!({"status":"registered","memory_schema_version":2}));
                     }
                     let service=services.lock().await.get(&request.store_path).cloned().context("Register memory store configuration first")?;
                     if let Action::Reembed(registration)=request.action {
                         ensure!(registration.store_path==request.store_path,"Store registration mismatch");
                         let updated=factory.reembed(service,registration).await?;
                         services.lock().await.insert(request.store_path,updated);
-                        return Ok(serde_json::json!({"status":"reembedded","embedding_ready":true}));
+                        return Ok(serde_json::json!({"status":"reembedded","embedding_ready":true,"memory_schema_version":2}));
                     }
                     match request.action {
                         Action::Write(value)=>Ok(serde_json::to_value(service.write(&request.context,value).await?)?),
@@ -286,6 +290,10 @@ pub async fn run(runtime_dir: &Path, factory: Arc<dyn ServiceFactory>) -> Result
                                 && !store.state.tombstones.contains_key(&claim.id)
                                 && *reference == format!("memory:{}@{}",claim.id,claim.revision))).collect();
                             Ok(serde_json::to_value(valid)?)
+                        },
+                        Action::ProjectionChanges{graph_project_id,cursor}=>{
+                            let store=service.store.lock().await;
+                            Ok(serde_json::to_value(store.projection_changes(&request.context,&graph_project_id,cursor).await?)?)
                         },
                         _=>bail!("Unsupported memory action"),
                     }

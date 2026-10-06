@@ -169,6 +169,9 @@ pub struct ReadRequest {
     pub operation_id: Option<String>,
     #[serde(default)]
     pub node_ids: Vec<String>,
+    /// Exact graph-side projection references; authority and revision are rechecked before ranking.
+    #[serde(default)]
+    pub graph_memory_refs: Vec<String>,
 }
 fn default_limit() -> usize {
     10
@@ -199,6 +202,7 @@ impl ReadRequest {
             since: None,
             operation_id: None,
             node_ids: Vec::new(),
+            graph_memory_refs: Vec::new(),
         }
     }
 }

@@ -26,6 +26,7 @@ pub struct Store {
     pub state: State,
     db: Surreal<Any>,
     rows: Rows,
+    projection_ready: bool,
 }
 impl Store {
     pub async fn open(path: Option<&Path>) -> Result<Self> {
@@ -102,9 +103,23 @@ impl Store {
             Vec::new()
         };
         if !meta.is_empty() {
+            db.query(include_str!("../../../schema/agent_memory_v2.surql"))
+                .await?
+                .check()?;
+            let projection_ready =
+                records::serde_json_value(meta[0].clone())?["projection_version"] == 1;
             let state = Self::load(&db).await?;
             let rows = records::rows(&state)?;
-            return Ok(Self { state, db, rows });
+            let mut store = Self {
+                state,
+                db,
+                rows,
+                projection_ready,
+            };
+            if !projection_ready {
+                store.commit(store.state.clone()).await?;
+            }
+            return Ok(store);
         }
         // v1 is an immutable migration source until the v2 transaction succeeds.
         let payloads: Vec<String> = if has_table("memory_state") {
@@ -135,6 +150,7 @@ impl Store {
             },
             db,
             rows: Rows::new(),
+            projection_ready: false,
         };
         store.persist(legacy, true).await?;
         Ok(store)
@@ -238,11 +254,16 @@ impl Store {
     }
     async fn persist(&mut self, mut next: State, migrate: bool) -> Result<()> {
         next.version = 2;
-        next.generation = if migrate {
-            next.generation + 1
+        let generation = if migrate {
+            next.generation
         } else {
-            self.state.generation + 1
+            self.state.generation
         };
+        ensure!(
+            generation < i64::MAX as u64,
+            "Memory generation exceeds SurrealDB's signed range"
+        );
+        next.generation = generation + 1;
         if let Some(identity) = &next.embedding_identity {
             let mut dimension = None;
             for claim in next
@@ -284,6 +305,7 @@ impl Store {
                 }
             }
         }
+        let projection_changes = projection_changes(&self.state, &next, !self.projection_ready)?;
         let rows = records::rows(&next)?;
         let mut updates = Vec::new();
         let mut edges = Vec::new();
@@ -309,7 +331,7 @@ impl Store {
         } else {
             query.push_str("LET $current = (SELECT VALUE generation FROM ONLY memory_meta:main) ?? 0; IF $current != $generation { THROW 'Memory generation conflict'; };");
         }
-        query.push_str("FOR $id IN $deletes { DELETE $id; }; FOR $row IN $updates { UPSERT $row.id CONTENT $row.content; }; FOR $row IN $edges { LET $from=$row.in; LET $edge=$row.id; LET $to=$row.out; RELATE $from->$edge->$to CONTENT $row.content; }; UPSERT memory_meta:main CONTENT $meta;");
+        query.push_str("FOR $id IN $deletes { DELETE $id; }; FOR $row IN $updates { UPSERT $row.id CONTENT $row.content; }; FOR $row IN $edges { LET $from=$row.in; LET $edge=$row.id; LET $to=$row.out; RELATE $from->$edge->$to CONTENT $row.content; }; FOR $change IN $projection_changes { LET $id=type::record('memory_projection_change',$change.memory_id); UPSERT $id CONTENT $change; }; UPSERT memory_meta:main CONTENT $meta;");
         if migrate {
             query.push_str("REMOVE TABLE IF EXISTS memory_state;");
             if let Some(identity) = &next.embedding_identity {
@@ -320,7 +342,8 @@ impl Store {
             }
         }
         query.push_str("COMMIT TRANSACTION;");
-        let mut meta = json!({"schema_version":2,"generation":next.generation});
+        let mut meta =
+            json!({"schema_version":2,"generation":next.generation,"projection_version":1});
         if let Some(identity) = &next.embedding_identity {
             meta["embedding_identity"] = identity.clone().into();
         }
@@ -331,11 +354,61 @@ impl Store {
             .bind(("edges", edges))
             .bind(("deletes", deletes))
             .bind(("meta", meta))
+            .bind(("projection_changes", projection_changes))
             .await?
             .check()?;
         self.state = next;
         self.rows = rows;
+        self.projection_ready = true;
         Ok(())
+    }
+
+    /// Bounded project-only deltas. The code projection never receives memory text or user/session content.
+    pub async fn projection_changes(
+        &self,
+        context: &ClientContext,
+        graph_project_id: &str,
+        cursor: codegraph_core::memory_projection::ProjectionCursor,
+    ) -> Result<codegraph_core::memory_projection::ProjectionBatch> {
+        use codegraph_core::memory_projection::*;
+        let mut rows:Vec<serde_json::Value>=self.db.query(
+            "SELECT memory_id,revision,generation,enabled,anchors FROM memory_projection_change WHERE owner_id=$owner AND project_id=$project AND (generation>$generation OR (generation=$generation AND memory_id>$memory_id)) ORDER BY generation ASC,memory_id ASC LIMIT 257;"
+        ).bind(("owner",context.owner_id.clone())).bind(("project",context.project_id.clone()))
+            .bind(("generation",cursor.generation)).bind(("memory_id",cursor.memory_id)).await?.check()?.take(0)?;
+        let complete = rows.len() <= 256;
+        rows.truncate(256);
+        let mut changes: Vec<ProjectionChange> = rows
+            .into_iter()
+            .map(serde_json::from_value)
+            .collect::<std::result::Result<_, _>>()?;
+        for change in &mut changes {
+            change
+                .anchors
+                .retain(|anchor| anchor.graph_project_id == graph_project_id);
+        }
+        let cursor = if complete {
+            ProjectionCursor {
+                generation: self.state.generation,
+                memory_id: "\u{10ffff}".into(),
+            }
+        } else {
+            let last = changes.last().context("Missing projection cursor")?;
+            ProjectionCursor {
+                generation: last.generation,
+                memory_id: last.memory_id.clone(),
+            }
+        };
+        let batch = ProjectionBatch {
+            source_id: digest(&(&context.owner_id, &context.project_id, graph_project_id))?,
+            cursor,
+            complete,
+            changes,
+        };
+        ensure!(
+            serde_json::to_vec(&batch)?.len() <= 6 * 1024 * 1024,
+            "Memory projection exceeds the bounded IPC allowance"
+        );
+        Ok(batch)
     }
 
     pub async fn hybrid_candidates(
@@ -413,6 +486,65 @@ impl Store {
 }
 pub(crate) fn vector_table(identity: &str) -> Result<String> {
     Ok(format!("memory_embedding_{}", digest(&identity)?))
+}
+
+fn projection_changes(
+    previous: &State,
+    next: &State,
+    seed: bool,
+) -> Result<Vec<serde_json::Value>> {
+    use codegraph_core::memory_projection::ProjectionAnchor;
+    fn content(claim: &Claim) -> serde_json::Value {
+        let enabled = !matches!(
+            claim.lifecycle,
+            Lifecycle::Provisional | Lifecycle::Retracted
+        );
+        let anchors: Vec<_> = if enabled {
+            claim
+                .anchors
+                .iter()
+                .map(|anchor| ProjectionAnchor {
+                    graph_project_id: anchor.graph_project_id.clone(),
+                    node_id: anchor.node_id.clone(),
+                    supporting: anchor.supporting,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        json!({"memory_id":claim.id,"owner_id":claim.owner_id,"project_id":claim.project_id,"revision":claim.revision,"enabled":enabled,"anchors":anchors})
+    }
+    let mut changes = Vec::new();
+    for claim in next
+        .claims
+        .values()
+        .filter(|claim| claim.scope == Scope::Project)
+    {
+        let mut value = content(claim);
+        if seed
+            || previous
+                .claims
+                .get(&claim.id)
+                .is_none_or(|old| old.scope != Scope::Project || content(old) != value)
+        {
+            value["generation"] = next.generation.into();
+            changes.push(value);
+        }
+    }
+    for old in previous
+        .claims
+        .values()
+        .filter(|claim| claim.scope == Scope::Project)
+    {
+        if next
+            .claims
+            .get(&old.id)
+            .is_none_or(|claim| claim.scope != Scope::Project)
+        {
+            changes.push(json!({"memory_id":old.id,"owner_id":old.owner_id,"project_id":old.project_id,"revision":old.revision+1,"generation":next.generation,"enabled":false,"anchors":[]}));
+        }
+    }
+    Ok(changes)
 }
 
 #[cfg(test)]
@@ -562,6 +694,19 @@ mod tests {
             .take(0)
             .unwrap();
         assert_eq!(rows[0], payload.to_string());
+        let mut overflowing = fixture();
+        overflowing.generation = u64::MAX;
+        let db = legacy(&overflowing).await;
+        assert!(Store::initialize(db.clone()).await.is_err());
+        let rows: Vec<String> = db
+            .query("SELECT VALUE payload FROM memory_state:main")
+            .await
+            .unwrap()
+            .check()
+            .unwrap()
+            .take(0)
+            .unwrap();
+        assert_eq!(rows[0], serde_json::to_string(&overflowing).unwrap());
     }
     #[tokio::test]
     async fn unrelated_commits_preserve_vector_rows_and_generation_conflicts_roll_back() {
@@ -696,6 +841,73 @@ mod tests {
                 .fuse_lists(vec![vec![], vec![]])
                 .await
                 .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn projection_deltas_paginate_same_generation_and_exclude_user_session_content() {
+        use codegraph_core::memory_projection::ProjectionCursor;
+        let mut store = Store::open(None).await.unwrap();
+        let mut state = fixture();
+        let template = state.claims["claim-a"].clone();
+        state.claims.clear();
+        for index in 0..260 {
+            let mut claim = template.clone();
+            claim.id = format!("claim-{index:03}");
+            state.claims.insert(claim.id.clone(), claim);
+        }
+        for (id, scope) in [("user", Scope::User), ("session", Scope::Session)] {
+            let mut claim = template.clone();
+            claim.id = id.into();
+            claim.scope = scope;
+            claim.session_id = Some("task".into());
+            state.claims.insert(claim.id.clone(), claim);
+        }
+        store.commit(state).await.unwrap();
+        let context = ClientContext {
+            owner_id: "alice".into(),
+            project_id: "p".into(),
+            session_id: None,
+            task_id: None,
+            context_epoch: None,
+            applicability: Default::default(),
+        };
+        let first = store
+            .projection_changes(&context, "p", ProjectionCursor::default())
+            .await
+            .unwrap();
+        assert_eq!(first.changes.len(), 256);
+        assert!(!first.complete);
+        let second = store
+            .projection_changes(&context, "p", first.cursor)
+            .await
+            .unwrap();
+        assert_eq!(second.changes.len(), 4);
+        assert!(second.complete);
+        let empty = store
+            .projection_changes(&context, "p", second.cursor.clone())
+            .await
+            .unwrap();
+        assert!(empty.changes.is_empty());
+        let mut next = store.state.clone();
+        next.claims.remove("claim-000");
+        store.commit(next).await.unwrap();
+        let deletion = store
+            .projection_changes(&context, "p", second.cursor)
+            .await
+            .unwrap();
+        assert_eq!(deletion.changes.len(), 1);
+        assert!(!deletion.changes[0].enabled);
+        assert!(deletion.changes[0].anchors.is_empty());
+        let mut foreign = context.clone();
+        foreign.owner_id = "bob".into();
+        assert!(
+            store
+                .projection_changes(&foreign, "p", ProjectionCursor::default())
+                .await
+                .unwrap()
+                .changes
                 .is_empty()
         );
     }
