@@ -3,6 +3,7 @@
 pub mod context;
 pub mod identity;
 pub mod owner;
+mod records;
 pub mod service;
 pub mod store;
 pub mod types;

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed - Native memory persistence
+
+- Memory schema v2 stores typed, queryable claims, observations, revisions, jobs,
+  evidence, idempotency, and tombstones with native relationship/derivation/locator edges.
+- Stable record identities and generation-checked incremental transactions replace
+  whole-state payload persistence and full vector-table rewrites. Metadata-only commits
+  preserve HNSW rows. Legacy v1 stores migrate atomically without losing their source
+  on failure; incompatible numeric values fail instead of silently losing precision.
+- HNSW declarations now live in a parameterized schema file for each pinned identity.
+  Durable memory remains separate from the rebuildable code index, as required by the design.
+
 ### Added - Semantic agent memory
 
 - Discoverable CLI subcommand help and direct flags for write idempotency/TTL,

@@ -341,6 +341,16 @@ pub struct Relationship {
     pub source: String,
     pub target: String,
     pub kind: RelationshipKind,
+    #[serde(default)]
+    pub source_revision: Option<u64>,
+    #[serde(default)]
+    pub target_revision: Option<u64>,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

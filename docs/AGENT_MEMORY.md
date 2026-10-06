@@ -192,7 +192,16 @@ authenticated loopback IPC. Project memory lives in `.codegraph/memory-db`; a
 persisted UUID preserves identity across moves, and Git worktrees share the common
 repository's memory. User memory lives in `~/.codegraph/user-memory-db`. User
 embedding settings are pinned independently of calling-project configuration.
-Memory schema v1 and vector partitions are independent of graph schema/re-indexing.
+Memory schema v2 and vector partitions are independent of graph schema/re-indexing.
+Existing v1 payload stores migrate transactionally on open: typed claims, observations,
+revisions, jobs, idempotency, tombstones, evidence, and native relations replace the
+payload snapshot. A failed migration retains its legacy source. Stable record IDs and
+generation-checked commits update only changed records and embedding chunks.
+`schema/agent_memory_v2.surql` defines queryable fields and access/lifecycle/review/job
+indexes. `schema/agent_memory_vectors.surql` declares the dynamically instantiated
+HNSW partitions. Native `memory_relationship`, `memory_derived_from`, and `memory_link`
+edges support provenance traversal; links end at durable logical code locators, never
+at records in a different database.
 
 ```sh
 codegraph memory service status
@@ -221,7 +230,6 @@ hooks restore guidance; they do not capture transcripts or automatically write m
 This version has no team scope, transcript capture, broad consolidation, client
 delivery-acknowledgement protocol, or automatic permanent retention purge. Supporting
 file/input checks run on recall; semantic symbol remapping and proactive index-event
-maintenance remain follow-up work. Store commits currently retain a canonical
-transactional state snapshot; large-store scaling and live recall/task accuracy need
-separate measurement. Offline fixture results establish contracts, not production
+maintenance remain follow-up work. The owner retains a reloadable policy cache; large-store scaling and live
+recall/task accuracy need separate measurement. Offline fixture results establish contracts, not production
 performance or model quality.

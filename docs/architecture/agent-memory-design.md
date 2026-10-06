@@ -147,6 +147,15 @@ locators; the service resolves them against the project's current index. They ar
 record references requiring a cross-database join, and never cascade on code node deletion.
 Historical locators and fingerprints survive when a node disappears or an index is unavailable.
 
+Database-native integration retains this separation: the durable memory database uses
+native relations to its own logical code-locator records. The code database can hold a
+rebuildable, project-scoped memory projection with local relations to `nodes`. Projection
+records are retrieval aids, never the authority for revisions, scope, or forgetting; candidate
+IDs must be checked against durable memory before delivery. User/session content is not copied
+into the project projection. An unavailable projection does not block semantic recall.
+Code rebuilds may remove this projection, while durable locators/history remain intact.
+
+
 Use one owning process per embedded store. Project MCP servers access their project owner;
 CLI commands attach to an existing owner rather than opening a locked store. Multiple project
 servers access the same user store through a shared local user-memory owner. Store ownership,
@@ -161,8 +170,10 @@ restart. Cross-store operations cannot assume an atomic transaction across both 
 
 ## Conceptual data model
 
-This is a logical model; schema names and physical embedding partitions will be finalized in
-implementation. Both bundled graph schemas must remain consistent wherever graph-side changes
+The logical model is implemented in the typed `agent_memory_v2.surql` schema, with
+identity-specific HNSW partitions declared through `agent_memory_vectors.surql`. Native
+claim relations, observation derivation, evidence records, and code-locator edges use stable
+record identities; v1 payload stores migrate transactionally and commits write changed rows. Both bundled graph schemas must remain consistent wherever graph-side changes
 are required. Memory schema migrations have their own version and preserve existing content.
 
 ```
@@ -771,8 +782,7 @@ bounded retry backoff. Missing/incompatible configuration remains explicitly rec
 The initial retrieval streams use scoped HNSW/BM25 candidates, normalized RRF, existing
 reranking, and bounded one-hop code context. Review horizons and core rules are documented
 in the usage guide. Remaining choices include measured threshold/weight calibration,
-retention quotas, proactive index-event maintenance, semantic anchor remapping, and scale
-improvements to canonical snapshot persistence.
+retention quotas, proactive index-event maintenance, semantic anchor remapping, and large-store cache sizing and incremental persistence performance.
 
 - Background model selection, structured-output mechanism, batching, retries, and cost budgets.
 - Candidate counts, fusion weights, reranking, and confidence calibration by relationship type.

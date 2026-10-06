@@ -843,6 +843,11 @@ impl MemoryService {
                     source: claim.id.clone(),
                     target: relation.memory_id.clone(),
                     kind: relation.kind,
+                    source_revision: Some(claim.revision),
+                    target_revision: Some(relation.expected_revision),
+                    operation_id: Some(job.id.clone()),
+                    created_at: Some(changed_at),
+                    evidence: claim.evidence.clone(),
                 });
             }
             ids.push(claim.id.clone());
