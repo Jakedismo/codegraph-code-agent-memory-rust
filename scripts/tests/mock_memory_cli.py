@@ -204,9 +204,12 @@ if "memory" in arguments:
                     for cid in job["memory_ids"]
                 )
             )
-            job.update(state="failed" if failed else "complete", embedding_ready=True)
+            job.update(
+                state="failed" if failed else "complete", embedding_ready=True,
+                error="Invalid classifier: mock proposal validation failed" if failed else None,
+            )
             for claim_id in job["memory_ids"]:
-                state["claims"][claim_id]["lifecycle"] = "active"
+                state["claims"][claim_id]["lifecycle"] = "provisional" if failed else "active"
         emit(job)
     if action == "read":
         emit(context(scope))

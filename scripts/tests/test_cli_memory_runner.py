@@ -218,6 +218,21 @@ class MemoryRunnerTests(unittest.TestCase):
             {"foreign": {"id": "foreign", "foreign": True, "statement": "Keep me."}},
         )
 
+    def test_failed_operation_is_reported_once_and_its_provisional_claim_is_cleaned(self):
+        process = self.execute("--memory-only", mode="classification-failed")
+        self.assertEqual(process.returncode, 1, process.stdout + process.stderr)
+        directory, report = self.report()
+        errors = [r for r in report["memory"]["results"] if r["status"] != "OK"]
+        self.assertEqual([r["test"] for r in errors], ["unanchored_write_wait"])
+        self.assertNotIn("cleanup_status", report["memory"]["error"])
+        cleanup = next(r for r in report["memory"]["results"] if r["test"] == "cleanup_status")
+        self.assertEqual(cleanup["response"]["state"], "failed")
+        self.assertTrue(cleanup["response"]["error"])
+        self.assertEqual(cleanup["status"], "OK")
+        state = json.loads((directory / "memory-home/mock-state.json").read_text())
+        self.assertEqual(state["claims"], {})
+        self.assertFalse(state["running"])
+
     def test_memory_timeout_blocks_agents_and_saves_diagnostics(self):
         process = self.execute(
             "--case", "1", "--memory-timeout-secs", "1", mode="memory-timeout"

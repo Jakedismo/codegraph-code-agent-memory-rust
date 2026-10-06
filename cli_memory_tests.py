@@ -266,6 +266,7 @@ class MemoryHarness:
         expected_error=None,
         scope="project",
         session=None,
+        allow_operation_failure=False,
     ):
         command = self.command(action, *arguments, scope=scope, session=session)
         if request is not None:
@@ -318,8 +319,15 @@ class MemoryHarness:
                     f"Expected rejection containing {expected_error!r}; received {response}.",
                 )
             else:
+                stored_failure = (
+                    allow_operation_failure
+                    and action == "status"
+                    and isinstance(error, str)
+                    and bool(response.get("id"))
+                    and response.get("state") in ("failed", "config_required")
+                )
                 require(
-                    process.returncode == 0 and error is None,
+                    process.returncode == 0 and (error is None or stored_failure),
                     str(error or process.stderr or f"CLI exited {process.returncode}"),
                 )
                 if check:
@@ -804,7 +812,8 @@ class MemoryHarness:
                 continue
             try:
                 operation = self.call(
-                    "cleanup_status", "status", operation_id, scope=tracked["scope"]
+                    "cleanup_status", "status", operation_id, scope=tracked["scope"],
+                    allow_operation_failure=True,
                 )
                 ids = set(tracked["memory_ids"]) | set(operation.get("memory_ids", []))
                 ids -= set(tracked["forgotten"])
