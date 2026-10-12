@@ -23,7 +23,7 @@ memory = ["dep:codegraph-memory"]
 [dependencies]
 # Provider contracts and the companion agent runtime split out in Rig 0.43.
 rig = { package = "rig-core", version = "0.43.0", features = ["reqwest"] }
-rig-agent = "0.43.0"
+rig-agent = "0.44.0"
 
 # Internal shared crates
 codegraph-core = { path = "../codegraph-core" }
